@@ -80,8 +80,10 @@ class SubGridBase(ModelUserObject):
         sg.i0, sg.j0, sg.k0 = p1
         sg.i1, sg.j1, sg.k1 = p2
 
-        sg.x1, sg.y1, sg.z1 = uip.round_to_grid(p1)
-        sg.x2, sg.y2, sg.z2 = uip.round_to_grid(p2)
+        # Physical position (m) of the IS in the main grid. N.B. p1 and
+        # p2 are already discretised (cell coordinates of the main grid)
+        sg.x1, sg.y1, sg.z1 = uip.discrete_to_continuous(p1)
+        sg.x2, sg.y2, sg.z2 = uip.discrete_to_continuous(p2)
 
     def set_name(self, sg: SubGridBaseGrid):
         sg.name = self.kwargs["id"]
@@ -101,6 +103,15 @@ class SubGridBase(ModelUserObject):
     def set_iterations(self, sg: SubGridBaseGrid, model: Model):
         """Sets number of iterations that will take place in the subgrid."""
         sg.iterations = model.iterations * sg.ratio
+
+    def set_timewindow(self, sg: SubGridBaseGrid):
+        """Sets the subgrid time window from its iterations and time step.
+
+        The subgrid must have a valid time window as sources use it to
+        set their default stop time (and to clamp user-specified stop
+        times) when calculating waveform values.
+        """
+        sg.timewindow = (sg.iterations - 1) * sg.dt
 
     def setup(self, sg: SubGridBaseGrid, model: Model):
         """ "Common setup to both all subgrid types."""
@@ -135,6 +146,7 @@ class SubGridBase(ModelUserObject):
         self.set_working_region_cells(sg)
         self.set_total_cells(sg)
         self.set_iterations(sg, model)
+        self.set_timewindow(sg)
         self.set_name(sg)
 
         # Copy a reference for the main grid to the sub grid
