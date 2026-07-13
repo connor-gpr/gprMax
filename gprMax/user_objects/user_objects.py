@@ -38,7 +38,13 @@ class UserObject(ABC):
             in an input file.
         kwargs (dict): Keyword arguments used to construct the user
             object.
-        autotranslate (bool): TODO
+        autotranslate (bool): Per-object override for subgrid coordinate
+            autotranslation. When the object is added to a subgrid and
+            autotranslation is enabled globally, setting this to False
+            makes the object use local subgrid array coordinates instead
+            of main grid coordinates (e.g. to place objects that
+            traverse the Outer Surface). It cannot enable
+            autotranslation when it is disabled globally.
         is_single_use (bool): True if the object can only appear once in a
             given model. False otherwise. Default True.
         is_geometry_object (bool): True if the object adds geometry to the
@@ -93,7 +99,7 @@ class UserObject(ABC):
         # specific objects.
         if (
             isinstance(grid, SubGridBaseGrid)
-            and config.sim_config.args.autotranslate
+            and config.sim_config.autotranslate
             and self.autotranslate
         ):
             return SubgridUserInput(grid)

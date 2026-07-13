@@ -25,6 +25,7 @@ import numpy as np
 import numpy.typing as npt
 from typing_extensions import TypeVar
 
+import gprMax.config as config
 from gprMax.grid.fdtd_grid import FDTDGrid
 from gprMax.grid.mpi_grid import MPIGrid
 from gprMax.subgrids.grid import SubGridBaseGrid
@@ -64,8 +65,35 @@ class UserInput(Generic[GridType]):
                 s = f"\n'{cmd_str}' {err.args[0]} {name}-coordinate {i * dl:g} is not within the model domain"
             else:
                 s = f"\n'{cmd_str}' {err.args[0]}-coordinate {i * dl:g} is not within the model domain"
+            s += self._out_of_bounds_hint(p)
             logger.exception(s)
             raise
+
+    def _out_of_bounds_hint(self, p: npt.NDArray[np.int32]) -> str:
+        """Extra context appended to out of bounds error messages."""
+        if isinstance(self.grid, SubGridBaseGrid):
+            s = (
+                f" The point was checked against sub-grid '{self.grid.name}' using"
+                " local sub-grid array coordinates (the origin of the local"
+                " coordinates is inside the sub-grid PML,"
+                f" {self.grid.n_boundary_cells * self.grid.dx:g}m before the Inner"
+                " Surface)."
+            )
+            if config.sim_config is not None and config.sim_config.autotranslate:
+                # autotranslate is enabled globally, so this specific
+                # object must have opted out of translation
+                s += (
+                    " This object has autotranslate disabled"
+                    " (object.autotranslate = False); remove the override to"
+                    " position it using main grid coordinates."
+                )
+            else:
+                s += (
+                    " To position objects in a sub-grid using main grid"
+                    " coordinates, pass autotranslate=True to gprMax.run()."
+                )
+            return s
+        return ""
 
     def discretise_static_point(self, point: Tuple[float, float, float]) -> npt.NDArray[np.int32]:
         """Get the nearest grid index to a continuous static point.
@@ -259,8 +287,15 @@ class MainGridUserInput(UserInput[GridType]):
         else:
             raise ValueError("Dimension should have value x, y, or z")
 
+        # Only the checked dimension is meaningful: the other two
+        # components of the helper points are placeholder zeros which
+        # translating UserInput classes (e.g. SubgridUserInput) can map
+        # outside the grid. Zero them after discretisation so only the
+        # checked axis can fail the bounds check.
+        check_point = np.zeros(3, dtype=np.int32)
+        check_point[index] = upper_point[index]
         try:
-            self.grid.within_bounds(upper_point)
+            self.grid.within_bounds(check_point)
         except ValueError:
             raise ValueError(
                 f"'{cmd_str}' extends beyond the size of the model in the {dimension} dimension"
@@ -392,6 +427,26 @@ class SubgridUserInput(MainGridUserInput[SubGridBaseGrid]):
             or np.greater(discretised_point, self.outer_bound).any()
         ):
             logger.warning(
-                f"'{cmd_str}' this object traverses the Outer Surface. This is an advanced feature."
+                f"'{cmd_str}' this object extends outside the working region of the"
+                " sub-grid (beyond the Inner Surface). This is an advanced feature."
             )
         return within_grid, discretised_point
+
+    def _out_of_bounds_hint(self, p: npt.NDArray[np.int32]) -> str:
+        """Extra context appended to out of bounds error messages.
+
+        The reported coordinate is the point translated to the local
+        coordinates of the subgrid, which can confuse users as it is not
+        the coordinate they entered. Recover the user coordinate and
+        report it along with the extent of the subgrid in the main grid.
+        """
+        user_point = self.grid.local_to_global_coordinate(p) * self.grid.dl
+        return (
+            f" The point was checked against sub-grid '{self.grid.name}'. With"
+            " autotranslate on, objects in a sub-grid are positioned using main"
+            f" grid coordinates: the supplied point ({user_point[0]:g}m,"
+            f" {user_point[1]:g}m, {user_point[2]:g}m) is outside the sub-grid,"
+            f" which spans ({self.grid.x1:g}m, {self.grid.y1:g}m,"
+            f" {self.grid.z1:g}m) to ({self.grid.x2:g}m, {self.grid.y2:g}m,"
+            f" {self.grid.z2:g}m) in the main grid."
+        )

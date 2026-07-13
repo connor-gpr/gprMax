@@ -120,6 +120,13 @@ def create_solver(model: Model) -> Solver:
         solver: Solver object.
     """
     grid = model.G
+    if model.subgrids and not config.sim_config.general["subgrid"]:
+        # Without the subgrid solver, subgrids would be built but never
+        # time-stepped, silently producing wrong results
+        raise ValueError(
+            "The model contains sub-grids but sub-gridding is not enabled. "
+            "Pass subgrid=True to gprMax.run()."
+        )
     if config.sim_config.general["subgrid"]:
         updates = create_subgrid_updates(model)
         if config.get_model_config().materials["maxpoles"] != 0:

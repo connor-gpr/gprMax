@@ -17,11 +17,14 @@
 # You should have received a copy of the GNU General Public License
 # along with gprMax.  If not, see <http://www.gnu.org/licenses/>.
 import argparse
+import logging
 
 import gprMax.config as config
 
 from .contexts import Context, MPIContext, TaskfarmContext
 from .utilities.logging import logging_config
+
+logger = logging.getLogger(__name__)
 
 # Arguments (used for API) and their default values (used for API and CLI)
 args_defaults = {
@@ -36,7 +39,7 @@ args_defaults = {
     "opencl": None,
     "metal": None,
     "subgrid": False,
-    "autotranslate": False,
+    "autotranslate": True,
     "geometry_only": False,
     "geometry_fixed": False,
     "write_processed": False,
@@ -81,11 +84,15 @@ help_msg = {
         " device(s)."
     ),
     "metal": "(list/bool, opt): Flag to use Apple Metal or list of Apple Metal GPU device ID(s) for specific GPU card(s).",
-    "subgrid": "(bool, opt): Flag to use sub-gridding.",
+    "subgrid": (
+        "(bool, opt): Flag to use sub-gridding. Enabled automatically when any scene"
+        " contains a sub-grid."
+    ),
     "autotranslate": (
         "(bool, opt): For sub-gridding - auto translate objects with main grid coordinates to their"
-        " equivalent local grid coordinate within the subgrid. If this option is off users must"
-        " specify sub-grid object point within the global subgrid space."
+        " equivalent local grid coordinate within the subgrid. Defaults to on. If this option is"
+        " off users must specify sub-grid object points in the local coordinates of the subgrid"
+        " array (whose origin is inside the subgrid PML)."
     ),
     "geometry_only": (
         "(bool, opt): Build a model and produce any geometry views but do not run the simulation."
@@ -171,12 +178,14 @@ def run(
             device ID(s) for specific compute device(s).
         metal: optional list/boolean to use Apple Metal or list of Apple
             Metal GPU device ID(s) for specific GPU card(s).
-        subgrid: optional boolean to use sub-gridding.
+        subgrid: optional boolean to use sub-gridding. Enabled
+            automatically when any scene contains a sub-grid.
         autotranslate: optional boolean for sub-gridding to auto
             translate objects with main grid coordinates to their
-            equivalent local grid coordinate within the subgrid. If this
-            option is off users must specify sub-grid object point
-            within the global subgrid space.
+            equivalent local grid coordinate within the subgrid.
+            Defaults to on. If this option is off users must specify
+            sub-grid object points in the local coordinates of the
+            subgrid array (whose origin is inside the subgrid PML).
         geometry_only: optional boolean to build a model and produce any
             geometry views but do not run the simulation.
         geometry_fixed: optional boolean to run a series of models where
@@ -326,6 +335,16 @@ def run_main(args):
         mpi_logger=args.mpi is not None,
         log_all_ranks=args.log_all_ranks,
     )
+
+    # Sub-gridding requires a dedicated solver and forces double
+    # precision, both configured before scenes are processed - detect
+    # sub-grids in the scene(s) here so users do not silently run a
+    # model whose sub-grids are never solved.
+    if not getattr(args, "subgrid", False) and getattr(args, "scenes", None):
+        if any(getattr(scene, "subgrid_objects", None) for scene in args.scenes):
+            logger.info("Sub-grid(s) detected in scene(s) - sub-gridding enabled.\n")
+            args.subgrid = True
+
     config.sim_config = config.SimulationConfig(args)
 
     # MPI taskfarm running with (OpenMP/CUDA/OpenCL)

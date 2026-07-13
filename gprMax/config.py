@@ -332,9 +332,10 @@ class SimulationConfig:
         else:
             self.general["subgrid"] = False
 
-        self.autotranslate_subgrid_coordinates = True
-        if hasattr(args, "autotranslate"):
-            self.autotranslate_subgrid_coordinates: bool = args.autotranslate
+        # Translate user coordinates of objects in subgrids from the
+        # main grid (global) coordinate system. May not exist if user
+        # enters via CLI.
+        self.autotranslate: bool = getattr(args, "autotranslate", True)
 
         # Scenes parameter may not exist if user enters via CLI
         self.scenes: List[Optional[Scene]]
