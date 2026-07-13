@@ -103,12 +103,17 @@ class ExcitationFile(GridUserObject):
 
         logger.info(self.grid_name(grid) + f"Excitation file: {excitationfile}")
 
-        # Get waveform names
-        waveformIDs = np.loadtxt(excitationfile, max_rows=1, dtype=str)
+        # Get waveform names (atleast_1d as loadtxt returns a 0-d array when
+        # the header contains a single name)
+        waveformIDs = np.atleast_1d(np.loadtxt(excitationfile, max_rows=1, dtype=str))
 
-        # Read all waveform values into an array
+        # Read all waveform values into an array (ndmin=2 so single-column and
+        # single-row files can still be indexed by column)
         waveformvalues = np.loadtxt(
-            excitationfile, skiprows=1, dtype=config.sim_config.dtypes["float_or_double"]
+            excitationfile,
+            skiprows=1,
+            ndmin=2,
+            dtype=config.sim_config.dtypes["float_or_double"],
         )
 
         # Time array (if specified) for interpolation, otherwise use simulation time
@@ -128,10 +133,7 @@ class ExcitationFile(GridUserObject):
             w.ID = waveformID
             w.type = "user"
 
-            # Select correct column of waveform values depending on array shape
-            singlewaveformvalues = (
-                waveformvalues[:] if len(waveformvalues.shape) == 1 else waveformvalues[:, i]
-            )
+            singlewaveformvalues = waveformvalues[:, i]
 
             # Truncate waveform array if it is longer than time array
             if len(singlewaveformvalues) > len(waveformtime):
