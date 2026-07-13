@@ -531,6 +531,12 @@ def antenna_like_GSSI_400(x, y, z, resolution=0.002, **kwargs):
     # Coordinates of source excitation point in antenna
     tx = x + 0.01 + 0.005 + 0.056, y + casethickness + 0.005 + 0.143, z + skidthickness
 
+    if resolution != 0.002:
+        logger.exception(
+            "This antenna module can only be used with a spatial discretisation of 2mm"
+        )
+        raise ValueError
+
     dx = 0.002
     dy = 0.002
     dz = 0.002

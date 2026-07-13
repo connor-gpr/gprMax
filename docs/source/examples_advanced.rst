@@ -73,7 +73,7 @@ Lines 74-75 define a cylinder object with the material ``water`` that we just cr
 
 On lines 78-81 a view of the subgrid geometry is added to the subgrid object.
 
-Finally, on line 95 when the model is run the keyword arguments ``subgrid`` and ``autotranslate`` are given and set to ``True``. The ``subgrid`` argument tells gprMax that subgrids are being used, and the ``autotranslate`` argument allows the user to specify subgrid objects using main grid coordinates which will then be internally translated to local subgrid coordinates. Without using this option the user would have to specify subgrid objects in local subgrid coordinates.
+Finally, on line 95 when the model is run the keyword arguments ``subgrid`` and ``autotranslate`` are given and set to ``True``. The ``subgrid`` argument tells gprMax that subgrids are being used, and the ``autotranslate`` argument allows the user to specify subgrid objects using main grid coordinates which will then be internally translated to local subgrid coordinates. Both behaviours are now the default - ``subgrid`` is enabled automatically when a scene contains a subgrid, and ``autotranslate`` defaults to ``True`` - so the keyword arguments are shown for clarity only. Setting ``autotranslate=False`` requires subgrid objects to be specified in local subgrid coordinates.
 
 
 Antenna modelling example
@@ -82,7 +82,7 @@ Antenna modelling example
 :download:`gssi_400_over_fractal_subsurface.py <../../examples/subgrids/gssi_400_over_fractal_subsurface.py>`
 
 This example demonstrates how to use subgrids at a more advanced level combining use of an imported GPR antenna model (like a GSSI 400MHz antenna) and rough subsurface interface. The geometry is 3D (required for any use of subgrids) and is of a 2 layered subsurface. The top layer in a sandy soil and the bottom layer a soil with
-higher permittivity (both have some simple conductive loss). There is a rough interface between the soil layers. A GPR antenna model (like a GSSI 400MHz antenna) is imported and placed on the surface of the layered media. The antenna is meshed using a subgrid with a fine spatial discretisation (1mm), and a courser spatial discretisation (9mm) is used in the rest of the model (main grid).
+higher permittivity (both have some simple conductive loss). There is a rough interface between the soil layers. A GPR antenna model (like a GSSI 400MHz antenna) is imported and placed on the surface of the layered media. The antenna is meshed using a subgrid with a fine spatial discretisation (2mm), and a courser spatial discretisation (10mm) is used in the rest of the model (main grid).
 
 .. figure:: ../../images_shared/antenna_like_GSSI_400_subgrids.png
     :width: 600px
@@ -92,7 +92,7 @@ higher permittivity (both have some simple conductive loss). There is a rough in
 .. figure:: ../../images_shared/antenna_like_GSSI_400_subgrids_detail.png
     :width: 600px
 
-    Zoomed in geometry showing a subgrid ratio of 1mm (subgrid) - antenna model - to 9mm (main grid).
+    Zoomed in geometry showing a subgrid ratio of 2mm (subgrid) - antenna model - to 10mm (main grid).
 
 .. literalinclude:: ../../examples/subgrids/gssi_400_over_fractal_subsurface.py
     :language: python
@@ -100,7 +100,7 @@ higher permittivity (both have some simple conductive loss). There is a rough in
 
 Much of the functionality demonstrated in this example is standard use of our :ref:`Python API <input-api>`, or covered in the introductory subgrid example earlier in this section.
 
-Lines 86-108 are important because they position an object (a box of sandy soil in this case) within the subgrid. This object has to be positioned manually (using local subgrid coordinates) as it crosses the interface between the subgrid and the main grid. The ``autotranslate`` property of the box object is set to ``False`` to allow this to happen.
+Lines 85-116 are important because they position an object (a box of sandy soil in this case) within the subgrid. This object has to be positioned manually (using local subgrid coordinates) as it crosses the interface between the subgrid and the main grid. The ``autotranslate`` property of the box object is set to ``False`` to allow this to happen.
 
 
 Customising the PMLs

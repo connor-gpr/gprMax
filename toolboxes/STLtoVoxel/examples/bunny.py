@@ -28,7 +28,7 @@ scene.add(time_window)
 go = gprMax.GeometryObjectsRead(p1=(0.020, 0.020, 0.020), geofile="stl/Stanford_Bunny.h5", matfile="materials.txt")
 
 gv = gprMax.GeometryView(
-    p1=(0, 0, 0), p2=domain.props.p1, dl=(dl, dl, dl), filename=fn.with_suffix("").name, output_type="n"
+    p1=(0, 0, 0), p2=(x, y, z), dl=(dl, dl, dl), filename=fn.with_suffix("").name, output_type="n"
 )
 
 scene.add(go)
