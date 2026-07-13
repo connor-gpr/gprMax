@@ -24,7 +24,7 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..Utilities.outputfiles_merge import get_output_data
+from ..Utilities.outputfiles_merge import get_output_data, get_rx_locations
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +118,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Open output file and read number of outputs (receivers)
-    f = h5py.File(args.outputfile, "r")
-    nrx = f.attrs["nrx"]
-    f.close()
+    # Open output file and read number of outputs (receivers),
+    # including any receivers in subgrids
+    with h5py.File(args.outputfile, "r") as f:
+        nrx = len(get_rx_locations(f))
 
     # Check there are any receivers
     if nrx == 0:
@@ -133,7 +133,16 @@ if __name__ == "__main__":
         if args.gather:
             if rx == 1:
                 rxsgather = outputdata
-            rxsgather = np.column_stack((rxsgather, outputdata))
+            else:
+                if outputdata.shape[0] != rxsgather.shape[0]:
+                    logger.exception(
+                        f"Cannot gather receivers with different numbers of "
+                        + f"samples. Subgrid traces can be decimated to match "
+                        + f"main grid traces by merging output files with the "
+                        + f"--decimate-subgrids option."
+                    )
+                    raise ValueError
+                rxsgather = np.column_stack((rxsgather, outputdata))
         else:
             plthandle = mpl_plot(
                 args.outputfile, outputdata, dt, rx, args.rx_component, save=args.save
