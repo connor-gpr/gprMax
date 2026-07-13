@@ -9,8 +9,8 @@ subsurface. The top layer in a sandy soil and the bottom layer a soil with
 higher permittivity (both have some simple conductive loss). There is a rough
 interface between the soil layers. A GPR antenna model (like a GSSI 400MHz
 antenna) is imported and placed on the surface of the layered media. The antenna
-is meshed using a subgrid with a fine spatial discretisation (1mm), and a
-courser spatial discretisation (9mm) is used in the rest of the model (main
+is meshed using a subgrid with a fine spatial discretisation (2mm), and a
+courser spatial discretisation (10mm) is used in the rest of the model (main
 grid).
 """
 
@@ -26,10 +26,11 @@ fn = Path(__file__)
 parts = fn.parts
 
 # Subgrid spatial discretisation in x, y, z directions
-dl_sg = 1e-3
+#   The GSSI 400MHz antenna model requires a 2mm spatial discretisation
+dl_sg = 2e-3
 
 # Subgrid ratio - must always be an odd integer multiple
-ratio = 9
+ratio = 5
 dl = dl_sg * ratio
 
 # Domain extent
@@ -58,7 +59,7 @@ scene.add(time_window)
 antenna_case = (0.3, 0.3, 0.178)
 
 # Position of antenna
-antenna_p = (x / 2, y / 2, 170 * dl)
+antenna_p = (x / 2, y / 2, 153 * dl)
 
 # Extra distance surrounding antenna for subgrid
 bounding_box = 2 * dl
@@ -94,13 +95,21 @@ pc = 6
 # Inner surface/outer surface separation
 isos = 3 * ratio
 
+# Number of cells from the subgrid array origin to the Inner Surface
+n_boundary_cells = ps + pc + isos
+
+# Total size of the subgrid array (working region + boundary regions)
+sg_nx = round((sg_x1 - sg_x0) / dl) * ratio + 2 * n_boundary_cells
+sg_ny = round((sg_y1 - sg_y0) / dl) * ratio + 2 * n_boundary_cells
+
 # Calculate maximum z-coordinate (height) for box of sandy_soil in subgrid
-h = antenna_p[2] - sg_z0 + (ps + pc + isos) * dl_sg
+h = antenna_p[2] - sg_z0 + n_boundary_cells * dl_sg
 
 # Create and add a box of homogeneous material to subgrid - sandy_soil
 sg.add(sandy_soil)
-b2 = gprMax.Box(p1=(0, 0, 0), p2=(411 * dl_sg, 411 * dl_sg, h), material_id="sandy_soil")
-# Set autotranslate for the box object to false
+b2 = gprMax.Box(p1=(0, 0, 0), p2=(sg_nx * dl_sg, sg_ny * dl_sg, h), material_id="sandy_soil")
+# Set autotranslate for the box object to false as it uses local subgrid
+# array coordinates in order to traverse the main grid/subgrid interface
 b2.autotranslate = False
 sg.add(b2)
 
@@ -157,7 +166,11 @@ gvsg = gprMax.GeometryView(
 sg.add(gvsg)
 
 gv1 = gprMax.GeometryView(
-    p1=(0, 0, 0), p2=domain.props.p1, dl=dl, filename=fn.with_suffix("").parts[-1], output_type="n"
+    p1=(0, 0, 0),
+    p2=(x, y, z),
+    dl=(dl, dl, dl),
+    filename=fn.with_suffix("").parts[-1],
+    output_type="n",
 )
 scene.add(gv1)
 
