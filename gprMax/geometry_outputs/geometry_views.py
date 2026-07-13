@@ -35,6 +35,7 @@ from gprMax.geometry_outputs.grid_view import GridType, GridView, MPIGridView
 from gprMax.grid.mpi_grid import MPIGrid
 from gprMax.receivers import Rx
 from gprMax.sources import Source
+from gprMax.subgrids.grid import SubGridBaseGrid
 from gprMax.utilities.utilities import get_terminal_width
 from gprMax.vtkhdf_filehandlers.vtkhdf import VtkHdfFile
 
@@ -228,7 +229,12 @@ class Metadata(Generic[GridType]):
         names: List[str] = []
         positions = np.empty((len(srcs), 3))
         for index, src in enumerate(srcs):
-            position = src.coord * self.grid.dl
+            if isinstance(self.grid, SubGridBaseGrid):
+                # Positions are output in the global (main grid) frame so
+                # they are consistent with the global origin of the mesh
+                position = self.grid.local_to_global_coordinate(src.coord) * self.grid.dl
+            else:
+                position = src.coord * self.grid.dl
             names.append(src.ID)
             positions[index] = position
 

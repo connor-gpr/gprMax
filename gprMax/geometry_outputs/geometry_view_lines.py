@@ -67,8 +67,11 @@ class GeometryViewLines(GeometryView[GridType]):
 
         # Add offset to subgrid geometry to correctly locate within main grid
         if isinstance(self.grid, SubGridBaseGrid):
-            offset = [self.grid.i0, self.grid.j0, self.grid.k0]
-            self.points += offset * self.grid.dl * self.grid.ratio
+            # Offset (in fine cells) of the subgrid array origin from the
+            # main grid origin, i.e. local cell (0, 0, 0) mapped to the
+            # global frame
+            offset = self.grid.local_to_global_coordinate(np.zeros(3, dtype=np.int32))
+            self.points += offset * self.grid.dl
 
         # Each point is the 'source' for 3 lines.
         # NB: Excluding points at the far edge of the geometry as those

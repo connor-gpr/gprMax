@@ -21,12 +21,30 @@ import logging
 from pathlib import Path
 
 import h5py
+import numpy as np
 
 from gprMax.grid.fdtd_grid import FDTDGrid
 
 from ._version import __version__
 
 logger = logging.getLogger(__name__)
+
+
+def output_position(obj, grid, is_subgrid=False):
+    """Position of a source/receiver in the global (main grid) frame.
+
+    Args:
+        obj: source, transmission line, or receiver with x/y/zcoord.
+        grid: FDTDGrid class describing a grid in a model.
+        is_subgrid: boolean for grid instance the main grid or a subgrid.
+
+    Returns:
+        position: x, y, z position (m) relative to the main grid origin.
+    """
+    coord = np.array([obj.xcoord, obj.ycoord, obj.zcoord])
+    if is_subgrid:
+        coord = grid.local_to_global_coordinate(coord)
+    return coord * np.array([grid.dx, grid.dy, grid.dz])
 
 
 def store_outputs(G: FDTDGrid, iteration: int):
@@ -115,27 +133,27 @@ def write_hd5_data(basegrp, grid, is_subgrid=False):
         basegrp.attrs["filter"] = grid.filter
         basegrp.attrs["ratio"] = grid.ratio
         basegrp.attrs["interpolation"] = grid.interpolation
+        # Placement of the subgrid (Inner Surface) within the main grid,
+        # in main grid cells
+        basegrp.attrs["i0_j0_k0"] = (grid.i0, grid.j0, grid.k0)
+        basegrp.attrs["n_boundary_cells"] = (
+            grid.n_boundary_cells_x,
+            grid.n_boundary_cells_y,
+            grid.n_boundary_cells_z,
+        )
 
     # Create group for sources (except transmission lines); add type and positional data attributes
     srclist = grid.voltagesources + grid.hertziandipoles + grid.magneticdipoles
     for srcindex, src in enumerate(srclist):
         grp = basegrp.create_group(f"srcs/src{str(srcindex + 1)}")
         grp.attrs["Type"] = type(src).__name__
-        grp.attrs["Position"] = (
-            src.xcoord * grid.dx,
-            src.ycoord * grid.dy,
-            src.zcoord * grid.dz,
-        )
+        grp.attrs["Position"] = output_position(src, grid, is_subgrid)
 
     # Create group for transmission lines; add positional data, line resistance and
     # line discretisation attributes; write arrays for line voltages and currents
     for tlindex, tl in enumerate(grid.transmissionlines):
         grp = basegrp.create_group("tls/tl" + str(tlindex + 1))
-        grp.attrs["Position"] = (
-            tl.xcoord * grid.dx,
-            tl.ycoord * grid.dy,
-            tl.zcoord * grid.dz,
-        )
+        grp.attrs["Position"] = output_position(tl, grid, is_subgrid)
         grp.attrs["Resistance"] = tl.resistance
         grp.attrs["dl"] = tl.dl
         # Save incident voltage and current
@@ -154,11 +172,7 @@ def write_hd5_data(basegrp, grid, is_subgrid=False):
         grp = basegrp.create_group("rxs/rx" + str(rxindex + 1))
         if rx.ID:
             grp.attrs["Name"] = rx.ID
-        grp.attrs["Position"] = (
-            rx.xcoord * grid.dx,
-            rx.ycoord * grid.dy,
-            rx.zcoord * grid.dz,
-        )
+        grp.attrs["Position"] = output_position(rx, grid, is_subgrid)
 
         for output in rx.outputs:
             basegrp["rxs/rx" + str(rxindex + 1) + "/" + output] = rx.outputs[output]

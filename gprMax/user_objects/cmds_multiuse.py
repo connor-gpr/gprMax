@@ -30,6 +30,7 @@ from scipy import interpolate
 
 import gprMax.config as config
 from gprMax.grid.fdtd_grid import FDTDGrid
+from gprMax.grid.mpi_grid import MPIGrid
 from gprMax.materials import DispersiveMaterial as DispersiveMaterialUser
 from gprMax.materials import ListMaterial as ListMaterialUser
 from gprMax.materials import Material as MaterialUser
@@ -42,6 +43,7 @@ from gprMax.sources import HertzianDipole as HertzianDipoleUser
 from gprMax.sources import MagneticDipole as MagneticDipoleUser
 from gprMax.sources import TransmissionLine as TransmissionLineUser
 from gprMax.sources import VoltageSource as VoltageSourceUser
+from gprMax.subgrids.grid import SubGridBaseGrid
 from gprMax.user_objects.cmds_geometry.cmds_geometry import (
     rotate_2point_object,
     rotate_polarisation,
@@ -51,6 +53,27 @@ from gprMax.user_objects.user_objects import GridUserObject
 from gprMax.waveforms import Waveform as WaveformUser
 
 logger = logging.getLogger(__name__)
+
+
+def src_rx_id_coordinate(
+    grid: FDTDGrid, coord: npt.NDArray[np.int32]
+) -> npt.NDArray[np.int32]:
+    """Cell coordinate used in auto-generated source/receiver IDs.
+
+    IDs always use the global (main grid) frame so they are consistent
+    with reported source/receiver positions whichever grid the object
+    belongs to.
+
+    Args:
+        grid: Grid the source/receiver belongs to.
+        coord: x, y, z cell coordinate local to grid.
+
+    Returns:
+        coord: x, y, z cell coordinate in the global frame.
+    """
+    if isinstance(grid, (SubGridBaseGrid, MPIGrid)):
+        return grid.local_to_global_coordinate(coord)
+    return coord
 
 
 class ExcitationFile(GridUserObject):
@@ -387,8 +410,7 @@ class VoltageSource(RotatableMixin, GridUserObject):
         voltage_source = VoltageSourceUser()
         voltage_source.polarisation = self.polarisation
         voltage_source.coord = coord
-        uip = self._create_uip(grid)
-        x, y, z = uip.discretise_static_point(self.point)
+        x, y, z = src_rx_id_coordinate(grid, coord)
         voltage_source.ID = f"{voltage_source.__class__.__name__}({x},{y},{z})"
         voltage_source.resistance = self.resistance
         voltage_source.waveformID = self.waveform_id
@@ -531,8 +553,7 @@ class HertzianDipole(RotatableMixin, GridUserObject):
 
         h.coord = coord
         h.coordorigin = coord
-        uip = self._create_uip(grid)
-        x, y, z = uip.discretise_static_point(self.point)
+        x, y, z = src_rx_id_coordinate(grid, coord)
         h.ID = f"{h.__class__.__name__}({x},{y},{z})"
         h.waveformID = self.waveform_id
 
@@ -689,8 +710,7 @@ class MagneticDipole(RotatableMixin, GridUserObject):
         m.polarisation = self.polarisation
         m.coord = coord
         m.coordorigin = coord
-        uip = self._create_uip(grid)
-        x, y, z = uip.discretise_static_point(self.point)
+        x, y, z = src_rx_id_coordinate(grid, coord)
         m.ID = f"{m.__class__.__name__}({x},{y},{z})"
         m.waveformID = self.waveform_id
 
@@ -844,8 +864,7 @@ class TransmissionLine(RotatableMixin, GridUserObject):
         t = TransmissionLineUser(grid.iterations, grid.dt)
         t.polarisation = self.polarisation
         t.coord = coord
-        uip = self._create_uip(grid)
-        x, y, z = uip.discretise_static_point(self.point)
+        x, y, z = src_rx_id_coordinate(grid, coord)
         t.ID = f"{t.__class__.__name__}({x},{y},{z})"
         t.resistance = self.resistance
         t.waveformID = self.waveform_id
@@ -1443,8 +1462,7 @@ class Rx(RotatableMixin, GridUserObject):
         r.coordorigin = coord
 
         if self.id is None:
-            uip = self._create_uip(grid)
-            x, y, z = uip.discretise_static_point(self.point)
+            x, y, z = src_rx_id_coordinate(grid, coord)
             r.ID = f"{r.__class__.__name__}({x},{y},{z})"
         else:
             r.ID = self.id
@@ -1529,7 +1547,7 @@ class RxArray(GridUserObject):
             self.lower_point, self.params_str(), "lower"
         )
         _, discretised_upper_point = uip.check_src_rx_point(
-            self.lower_point, self.params_str(), "upper"
+            self.upper_point, self.params_str(), "upper"
         )
         discretised_dl = uip.discretise_static_point(self.dl)
 

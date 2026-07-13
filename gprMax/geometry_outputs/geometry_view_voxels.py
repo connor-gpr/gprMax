@@ -41,12 +41,11 @@ class GeometryViewVoxels(GeometryView[GridType]):
         self.material_data = self.grid_view.get_solid()
 
         if isinstance(self.grid, SubGridBaseGrid):
-            self.origin = np.array(
-                [
-                    (self.grid.i0 * self.grid.dx * self.grid.ratio),
-                    (self.grid.j0 * self.grid.dy * self.grid.ratio),
-                    (self.grid.k0 * self.grid.dz * self.grid.ratio),
-                ]
+            # Map the local start of the view to the global (main grid)
+            # frame so the view is correctly placed even when it does not
+            # start exactly at the Inner Surface
+            self.origin = (
+                self.grid.local_to_global_coordinate(self.grid_view.start) * self.grid.dl
             )
         else:
             self.origin = self.grid_view.start * self.grid.dl

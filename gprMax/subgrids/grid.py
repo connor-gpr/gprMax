@@ -20,6 +20,9 @@
 import logging
 from abc import ABC, abstractmethod
 
+import numpy as np
+import numpy.typing as npt
+
 from gprMax.grid.fdtd_grid import FDTDGrid
 
 logger = logging.getLogger(__name__)
@@ -66,6 +69,29 @@ class SubGridBaseGrid(FDTDGrid, ABC):
         self.n_boundary_cells_z = d_to_pml + self.pmls["thickness"]["z0"]
 
         self.interpolation = kwargs["interpolation"]
+
+    def local_to_global_coordinate(
+        self, coord: npt.NDArray[np.int32]
+    ) -> npt.NDArray[np.int32]:
+        """Maps a local subgrid cell coordinate to the global coordinate system.
+
+        The returned coordinate is a fine (subgrid resolution) cell index
+        measured from the main grid origin, i.e. the inverse of
+        SubgridUserInput.translate_to_gap. Multiply by self.dl to obtain
+        the physical position in the main grid frame.
+
+        Args:
+            coord: x, y, z local cell coordinate of the subgrid.
+
+        Returns:
+            global_coord: x, y, z fine cell coordinate relative to the
+                main grid origin.
+        """
+        n_boundary_cells = np.array(
+            [self.n_boundary_cells_x, self.n_boundary_cells_y, self.n_boundary_cells_z]
+        )
+        is_corner = np.array([self.i0, self.j0, self.k0]) * self.ratio
+        return coord - n_boundary_cells + is_corner
 
     @abstractmethod
     def update_magnetic_is(self, precursors):
