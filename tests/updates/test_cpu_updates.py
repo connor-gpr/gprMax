@@ -72,12 +72,15 @@ def test_update_magnetic(config_mock):
 
     grid.updatecoeffsH[1] = 1
 
-    grid.Ex = np.tile(np.array([[[1, 2], [2, 1]], [[2, 1], [1, 2]]], dtype=np.float32), (6, 6, 6))
-    grid.Ey = np.tile(np.array([[[1, 3], [3, 1]], [[3, 1], [1, 3]]], dtype=np.float32), (6, 6, 6))
-    grid.Ez = np.tile(np.array([[[1, 4], [4, 1]], [[4, 1], [1, 4]]], dtype=np.float32), (6, 6, 6))
-    grid.Hx = np.tile(np.array([[[3, 1], [1, 3]], [[1, 3], [3, 1]]], dtype=np.float32), (6, 6, 6))
-    grid.Hy = np.tile(np.array([[[1, 5], [5, 1]], [[5, 1], [1, 5]]], dtype=np.float32), (6, 6, 6))
-    grid.Hz = np.tile(np.array([[[5, 3], [3, 5]], [[3, 5], [5, 3]]], dtype=np.float32), (6, 6, 6))
+    # Field arrays must match the configured precision, as the cython update
+    # functions require all arrays to share one float_or_double specialisation
+    dtype = config.sim_config.dtypes["float_or_double"]
+    grid.Ex = np.tile(np.array([[[1, 2], [2, 1]], [[2, 1], [1, 2]]], dtype=dtype), (6, 6, 6))
+    grid.Ey = np.tile(np.array([[[1, 3], [3, 1]], [[3, 1], [1, 3]]], dtype=dtype), (6, 6, 6))
+    grid.Ez = np.tile(np.array([[[1, 4], [4, 1]], [[4, 1], [1, 4]]], dtype=dtype), (6, 6, 6))
+    grid.Hx = np.tile(np.array([[[3, 1], [1, 3]], [[1, 3], [3, 1]]], dtype=dtype), (6, 6, 6))
+    grid.Hy = np.tile(np.array([[[1, 5], [5, 1]], [[5, 1], [1, 5]]], dtype=dtype), (6, 6, 6))
+    grid.Hz = np.tile(np.array([[[5, 3], [3, 5]], [[3, 5], [5, 3]]], dtype=dtype), (6, 6, 6))
 
     expected_Ex = grid.Ex.copy()
     expected_Ey = grid.Ey.copy()
@@ -85,9 +88,9 @@ def test_update_magnetic(config_mock):
     expected_Hx = grid.Hx.copy()
     expected_Hy = grid.Hy.copy()
     expected_Hz = grid.Hz.copy()
-    expected_Hx[1:, :-1, :-1] = np.tile(np.array([[[2]]], dtype=np.float32), (11, 11, 11))
-    expected_Hy[:-1, 1:, :-1] = np.tile(np.array([[[3]]], dtype=np.float32), (11, 11, 11))
-    expected_Hz[:-1, :-1, 1:] = np.tile(np.array([[[4]]], dtype=np.float32), (11, 11, 11))
+    expected_Hx[1:, :-1, :-1] = np.tile(np.array([[[2]]], dtype=dtype), (11, 11, 11))
+    expected_Hy[:-1, 1:, :-1] = np.tile(np.array([[[3]]], dtype=dtype), (11, 11, 11))
+    expected_Hz[:-1, :-1, 1:] = np.tile(np.array([[[4]]], dtype=dtype), (11, 11, 11))
 
     # Why does fields_updates_normal use i+1, j+1 and k+1 everywhere?
     cpu_updates = CPUUpdates(grid)
@@ -125,12 +128,15 @@ def test_update_electric_a_non_dispersive(config_mock):
     grid.updatecoeffsE[1] = 1
     print(grid.updatecoeffsE[1])
 
-    grid.Ex = np.tile(np.array([[[3, 1], [1, 3]], [[1, 3], [3, 1]]], dtype=np.float32), (6, 6, 6))
-    grid.Ey = np.tile(np.array([[[1, 5], [5, 1]], [[5, 1], [1, 5]]], dtype=np.float32), (6, 6, 6))
-    grid.Ez = np.tile(np.array([[[5, 3], [3, 5]], [[3, 5], [5, 3]]], dtype=np.float32), (6, 6, 6))
-    grid.Hx = np.tile(np.array([[[1, 2], [2, 1]], [[2, 1], [1, 2]]], dtype=np.float32), (6, 6, 6))
-    grid.Hy = np.tile(np.array([[[1, 3], [3, 1]], [[3, 1], [1, 3]]], dtype=np.float32), (6, 6, 6))
-    grid.Hz = np.tile(np.array([[[1, 4], [4, 1]], [[4, 1], [1, 4]]], dtype=np.float32), (6, 6, 6))
+    # Field arrays must match the configured precision, as the cython update
+    # functions require all arrays to share one float_or_double specialisation
+    dtype = config.sim_config.dtypes["float_or_double"]
+    grid.Ex = np.tile(np.array([[[3, 1], [1, 3]], [[1, 3], [3, 1]]], dtype=dtype), (6, 6, 6))
+    grid.Ey = np.tile(np.array([[[1, 5], [5, 1]], [[5, 1], [1, 5]]], dtype=dtype), (6, 6, 6))
+    grid.Ez = np.tile(np.array([[[5, 3], [3, 5]], [[3, 5], [5, 3]]], dtype=dtype), (6, 6, 6))
+    grid.Hx = np.tile(np.array([[[1, 2], [2, 1]], [[2, 1], [1, 2]]], dtype=dtype), (6, 6, 6))
+    grid.Hy = np.tile(np.array([[[1, 3], [3, 1]], [[3, 1], [1, 3]]], dtype=dtype), (6, 6, 6))
+    grid.Hz = np.tile(np.array([[[1, 4], [4, 1]], [[4, 1], [1, 4]]], dtype=dtype), (6, 6, 6))
 
     expected_Ex = grid.Ex.copy()
     expected_Ey = grid.Ey.copy()
@@ -139,9 +145,9 @@ def test_update_electric_a_non_dispersive(config_mock):
     expected_Hy = grid.Hy.copy()
     expected_Hz = grid.Hz.copy()
     # Why is there not a full (11x11x11) section of the frid being updated?
-    expected_Ex[:-1, 1:-1, 1:-1] = np.tile(np.array([[[2]]], dtype=np.float32), (11, 10, 10))
-    expected_Ey[1:-1, :-1, 1:-1] = np.tile(np.array([[[3]]], dtype=np.float32), (10, 11, 10))
-    expected_Ez[1:-1, 1:-1, :-1] = np.tile(np.array([[[4]]], dtype=np.float32), (10, 10, 11))
+    expected_Ex[:-1, 1:-1, 1:-1] = np.tile(np.array([[[2]]], dtype=dtype), (11, 10, 10))
+    expected_Ey[1:-1, :-1, 1:-1] = np.tile(np.array([[[3]]], dtype=dtype), (10, 11, 10))
+    expected_Ez[1:-1, 1:-1, :-1] = np.tile(np.array([[[4]]], dtype=dtype), (10, 10, 11))
 
     cpu_updates = CPUUpdates(grid)
     cpu_updates.update_electric_a()
