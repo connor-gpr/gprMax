@@ -38,6 +38,58 @@ from gprMax.user_objects.user_objects import (
 
 logger = logging.getLogger(__name__)
 
+# Minimum recommended number of main grid cells between a subgrid Outer
+# Surface and the main grid PML
+MIN_OS_PML_CELLS = 10
+
+
+def os_pml_gaps(sg, grid):
+    """Main grid cells between the subgrid Outer Surface and the PML.
+
+    Args:
+        sg: subgrid with main grid placement indices (i0..k1, the Inner
+            Surface) and is_os_sep set.
+        grid: FDTDGrid of the main grid.
+
+    Returns:
+        dict of PML face id to gap in whole cells. Negative means the
+        Outer Surface is inside the PML.
+    """
+    t = grid.pmls["thickness"]
+    return {
+        "x0": (sg.i0 - sg.is_os_sep) - t["x0"],
+        "y0": (sg.j0 - sg.is_os_sep) - t["y0"],
+        "z0": (sg.k0 - sg.is_os_sep) - t["z0"],
+        "xmax": (grid.nx - t["xmax"]) - (sg.i1 + sg.is_os_sep),
+        "ymax": (grid.ny - t["ymax"]) - (sg.j1 + sg.is_os_sep),
+        "zmax": (grid.nz - t["zmax"]) - (sg.k1 + sg.is_os_sep),
+    }
+
+
+def warn_if_os_close_to_pml(sg, grid, cmd_str, min_cells=MIN_OS_PML_CELLS):
+    """Warns if the subgrid Outer Surface is too close to the main grid PML.
+
+    The OS radiates the subgrid's scattered field into the main grid. If it
+    sits close to the PML, the imperfectly absorbed near field couples back
+    into the subgrid through the IS/OS and can cause large errors and
+    late-time exponential instability. Uses the main grid PML thickness at
+    subgrid build time.
+
+    Returns:
+        dict of PML face id to gap in cells for the faces closer than
+        min_cells (empty when the placement is fine).
+    """
+    close = {face: gap for face, gap in os_pml_gaps(sg, grid).items() if gap < min_cells}
+    if close:
+        faces = ", ".join(f"{face}: {gap}" for face, gap in close.items())
+        logger.warning(
+            f"{cmd_str} the Outer Surface is within {min_cells} main grid "
+            f"cells of the PML (cells to PML - {faces}). This can cause "
+            "large errors and late-time instability. Increase the domain "
+            "size or reduce the subgrid extent."
+        )
+    return close
+
 
 class SubGridBase(ModelUserObject):
     """Allows UserObjectMulti and UserObjectGeometry to be nested in SubGrid
@@ -136,6 +188,8 @@ class SubGridBase(ModelUserObject):
         self.set_total_cells(sg)
         self.set_iterations(sg, model)
         self.set_name(sg)
+
+        warn_if_os_close_to_pml(sg, model.G, self.__str__())
 
         # Copy a reference for the main grid to the sub grid
         sg.parent_grid = model.G
