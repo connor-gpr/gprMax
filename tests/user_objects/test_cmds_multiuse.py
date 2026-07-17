@@ -63,6 +63,18 @@ def test_multiple_waveforms_select_correct_columns(tmp_path, sim_config, grid):
     assert_allclose(grid.waveforms[1].userfunc(1.0), 6.0)
 
 
+def test_numeric_fill_value_used_beyond_file_end(tmp_path, sim_config, grid):
+    excitationfile = write_excitation_file(
+        tmp_path, "time mypulse\n0.0 0.0\n1.0 2.0\n2.0 4.0\n"
+    )
+
+    ExcitationFile(filepath=excitationfile, kind="linear", fill_value=0.0).build(grid)
+
+    # Times beyond the file must return the fill value, not raise - interp1d
+    # only defaults bounds_error to False for fill_value="extrapolate"
+    assert_allclose(grid.waveforms[0].userfunc([1.5, 2.5, 100.0]), [3.0, 0.0, 0.0])
+
+
 def test_single_data_row(tmp_path, sim_config, grid):
     excitationfile = write_excitation_file(tmp_path, "wave1 wave2\n1.0 2.0\n")
 
