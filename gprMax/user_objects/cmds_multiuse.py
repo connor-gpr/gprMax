@@ -151,8 +151,16 @@ class ExcitationFile(GridUserObject):
             if self.kind is None and self.fill_value is None:
                 w.userfunc = interpolate.interp1d(waveformtime, singlewaveformvalues)
             elif self.kind is not None and self.fill_value is not None:
+                # bounds_error=False so a numeric fill_value is usable:
+                # interp1d only defaults bounds_error to False for
+                # fill_value="extrapolate", and raises on times beyond the
+                # file otherwise
                 w.userfunc = interpolate.interp1d(
-                    waveformtime, singlewaveformvalues, kind=self.kind, fill_value=self.fill_value
+                    waveformtime,
+                    singlewaveformvalues,
+                    kind=self.kind,
+                    fill_value=self.fill_value,
+                    bounds_error=False,
                 )
             else:
                 raise ValueError(f"{self} requires either one or three parameter(s)")
