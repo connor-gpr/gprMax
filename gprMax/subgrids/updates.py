@@ -26,8 +26,31 @@ from gprMax.subgrids.grid import SubGridBaseGrid
 from ..updates.cpu_updates import CPUUpdates
 from .precursor_nodes import PrecursorNodes, PrecursorNodesFiltered
 from .subgrid_hsg import SubGridHSG
+from .subgrid_shsg import SubGridSHSG
 
 logger = logging.getLogger(__name__)
+
+
+class OSSurfaceView:
+    """Presents a subgrid to the precursor-node classes with its surface
+    indices moved from the Inner Surface to the Outer Surface.
+
+    The SHSG interpolates and filters the main-grid fields at the OS
+    (the HSG does so at the IS). The precursor classes only read the
+    surface box indices and extents from the subgrid, so a shifted view
+    reuses them unchanged: the OS box is the IS box expanded by is_os_sep
+    main-grid cells, and the fine extents grow accordingly.
+    """
+
+    def __init__(self, sg):
+        s = sg.is_os_sep
+        self.i0, self.j0, self.k0 = sg.i0 - s, sg.j0 - s, sg.k0 - s
+        self.i1, self.j1, self.k1 = sg.i1 + s, sg.j1 + s, sg.k1 + s
+        self.nwx = sg.nwx + 2 * s * sg.ratio
+        self.nwy = sg.nwy + 2 * s * sg.ratio
+        self.nwz = sg.nwz + 2 * s * sg.ratio
+        self.ratio = sg.ratio
+        self.interpolation = sg.interpolation
 
 
 def create_updates(model: Model):
@@ -36,13 +59,19 @@ def create_updates(model: Model):
 
     for sg in model.subgrids:
         sg_type = type(sg)
-        if sg_type == SubGridHSG and sg.filter:
-            precursors = PrecursorNodesFiltered(model.G, sg)
-        elif sg_type == SubGridHSG:
-            precursors = PrecursorNodes(model.G, sg)
+        if sg_type == SubGridHSG:
+            surface = sg
+        elif sg_type == SubGridSHSG:
+            surface = OSSurfaceView(sg)
+            sg.apply_shsg_loss(model.G)
         else:
             logger.exception(f"{str(sg)} is not a subgrid type")
             raise ValueError
+
+        if sg.filter:
+            precursors = PrecursorNodesFiltered(model.G, surface)
+        else:
+            precursors = PrecursorNodes(model.G, surface)
 
         sgu = SubgridUpdater(sg, precursors, model.G)
         updaters.append(sgu)

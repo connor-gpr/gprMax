@@ -27,6 +27,7 @@ from gprMax.grid.fdtd_grid import FDTDGrid
 from gprMax.model import Model
 from gprMax.subgrids.grid import SubGridBaseGrid
 from gprMax.subgrids.subgrid_hsg import SubGridHSG as SubGridHSGUser
+from gprMax.subgrids.subgrid_shsg import SubGridSHSG as SubGridSHSGGrid
 from gprMax.user_inputs import MainGridUserInput
 from gprMax.user_objects.user_objects import (
     GeometryUserObject,
@@ -285,5 +286,101 @@ class SubGridHSG(SubGridBase):
 
     def build(self, model: Model) -> SubGridHSGUser:
         sg = SubGridHSGUser(**self.kwargs)
+        self.setup(sg, model)
+        return sg
+
+
+class SubGridSHSG(SubGridBase):
+    """Switched Huygens Subgridding (SHSG) user object.
+
+    The switched HSG (Hartley, Giannopoulos & Davidson, IEEE TAP 70(8),
+    2022) reverses the roles of the Inner and Outer Surfaces relative to
+    the HSG: the OS radiates the main grid into the subgrid and the IS
+    radiates the subgrid into the main grid. Fields in the non-working
+    regions of both grids are then identically zero, so artificial loss
+    applied there suppresses the HSG's late-time instability without
+    corrupting the physical solution. The subgrid needs no PML and only a
+    single fine cell beyond the OS, making it faster and smaller than the
+    equivalent HSG subgrid. Fields in the IS-OS gap equal the physical
+    solution in either grid and can be sampled directly.
+
+    Attributes:
+        p1: list of the position of the lower left corner of the Inner
+            Surface (x, y, z) in the main grid.
+        p2: list of the position of the upper right corner of the Inner
+            Surface (x, y, z) in the main grid.
+        ratio: int of the ratio of the main grid spatial step to the
+            sub-grid spatial step. Must be an odd integer.
+        id: string identifier for the sub-grid.
+        is_os_sep: int for the number of main grid cells between the Inner
+            Surface and the Outer Surface. Defaults to 3.
+        interpolation: int for the degree of the interpolation scheme used
+            for spatial interpolation of the fields at the Outer Surface.
+            Defaults to linear.
+        filter: boolean to turn on the 3-node filter applied to the fields
+            fed through the Outer Surface. Increases numerical stability.
+            Defaults to True.
+        le, lm: float electric/magnetic loss factors applied to the main
+            grid non-working region (inside the IS). Default 1.0.
+        les, lms: float electric/magnetic loss factors applied to the
+            subgrid non-working region (beyond the OS). Default 1.0.
+            Loss factors are mandatory for SHSG stability - the paper
+            shows the switched scheme without loss is less stable than
+            the HSG - so at least one factor must be positive.
+    """
+
+    @property
+    def order(self):
+        return 18
+
+    @property
+    def hash(self):
+        return "#subgrid_shsg"
+
+    def __init__(
+        self,
+        p1=None,
+        p2=None,
+        ratio=3,
+        id="",
+        is_os_sep=3,
+        interpolation=1,
+        filter=True,
+        le=1.0,
+        lm=1.0,
+        les=1.0,
+        lms=1.0,
+        **kwargs,
+    ):
+        if le == lm == les == lms == 0:
+            logger.exception(
+                "SubGridSHSG requires artificial loss for stability: the "
+                "switched scheme without loss factors is LESS stable than "
+                "the plain HSG. Set at least one of le/lm/les/lms > 0 "
+                "(default 1.0)."
+            )
+            raise ValueError
+
+        # The switched scheme needs no subgrid PML: a single fine cell
+        # beyond the OS terminates the (zero-field) non-working region,
+        # so n_boundary_cells = is_os_sep * ratio + 1
+        kwargs["p1"] = p1
+        kwargs["p2"] = p2
+        kwargs["ratio"] = ratio
+        kwargs["id"] = id
+        kwargs["is_os_sep"] = is_os_sep
+        kwargs["pml_separation"] = 1
+        kwargs["subgrid_pml_thickness"] = 0
+        kwargs["interpolation"] = interpolation
+        kwargs["filter"] = filter
+        kwargs["le"] = le
+        kwargs["lm"] = lm
+        kwargs["les"] = les
+        kwargs["lms"] = lms
+
+        super().__init__(**kwargs)
+
+    def build(self, model: Model) -> SubGridSHSGGrid:
+        sg = SubGridSHSGGrid(**self.kwargs)
         self.setup(sg, model)
         return sg

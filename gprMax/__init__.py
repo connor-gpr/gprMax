@@ -12,7 +12,7 @@ import gprMax.config as config
 from ._version import __version__
 from .gprMax import run as run
 from .scene import Scene
-from .subgrids.user_objects import SubGridHSG
+from .subgrids.user_objects import SubGridHSG, SubGridSHSG
 from .user_objects.cmds_geometry.add_grass import AddGrass
 from .user_objects.cmds_geometry.add_surface_roughness import AddSurfaceRoughness
 from .user_objects.cmds_geometry.add_surface_water import AddSurfaceWater
