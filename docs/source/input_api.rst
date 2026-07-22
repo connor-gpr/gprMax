@@ -267,6 +267,8 @@ Subgrid
 -------
 .. autoclass:: gprMax.SubGridHSG
 
+.. autoclass:: gprMax.SubGridSHSG
+
 
 .. _pml-tuning:
 
