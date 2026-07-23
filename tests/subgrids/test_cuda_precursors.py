@@ -121,6 +121,18 @@ def build_parent(shape):
     )
 
 
+@pytest.fixture(autouse=True)
+def fake_sim_config(monkeypatch):
+    import gprMax.config as config
+
+    monkeypatch.setattr(
+        config,
+        "sim_config",
+        SimpleNamespace(dtypes={"float_or_double": np.float64}),
+        raising=False,
+    )
+
+
 @pytest.mark.parametrize("interpolation", [1, 2, 3])
 @pytest.mark.parametrize("filt", [False, True])
 def test_device_precursors_match_cpu(interpolation, filt):

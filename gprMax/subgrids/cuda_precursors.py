@@ -40,6 +40,7 @@ iteration, independent of substep count.
 
 import numpy as np
 
+import gprMax.config as config
 from .precursor_nodes import (
     PrecursorNodes,
     PrecursorNodesFiltered,
@@ -62,7 +63,9 @@ class DeviceBridgeMixin:
         self._parent = parent
         self._drv = parent.drv
         self._gpuarray = parent.grid.gpuarray
-        self._real = self.ex_front_1.dtype.type
+        # Device buffers must match the kernels' $REAL (the host precursor
+        # arrays are always float64 regardless of the configured precision)
+        self._real = config.sim_config.dtypes["float_or_double"]
 
         self.e_weights = (0.0, 1.0)
         self.h_weights = (0.0, 1.0)
@@ -230,7 +233,9 @@ class DeviceResidentMixin(DeviceBridgeMixin):
         self._parent = parent
         self._drv = parent.drv
         self._gpuarray = parent.grid.gpuarray
-        self._real = self.ex_front_1.dtype.type
+        # Device buffers must match the kernels' $REAL (the host precursor
+        # arrays are always float64 regardless of the configured precision)
+        self._real = config.sim_config.dtypes["float_or_double"]
 
         self.e_weights = (0.0, 1.0)
         self.h_weights = (0.0, 1.0)

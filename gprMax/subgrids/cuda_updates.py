@@ -131,6 +131,8 @@ class CUDASubgridUpdates(CUDAUpdates, HSGCapable):
             [
                 knl_subgrid_coupling.update_electric_os,
                 knl_subgrid_coupling.update_magnetic_os,
+                knl_subgrid_coupling.update_os_faces_electric,
+                knl_subgrid_coupling.update_os_faces_magnetic,
                 knl_subgrid_coupling.pack_planes,
                 knl_precursors.gather_weighted_planes,
                 knl_precursors.interp_faces,
@@ -139,6 +141,8 @@ class CUDASubgridUpdates(CUDAUpdates, HSGCapable):
         knl = self.source_module(bld, options=config.sim_config.devices["nvcc_opts"])
         self.update_electric_os_dev = knl.get_function("update_electric_os")
         self.update_magnetic_os_dev = knl.get_function("update_magnetic_os")
+        self.update_os_faces_electric_dev = knl.get_function("update_os_faces_electric")
+        self.update_os_faces_magnetic_dev = knl.get_function("update_os_faces_magnetic")
         self.pack_planes_dev = knl.get_function("pack_planes")
         self.gather_weighted_planes_dev = knl.get_function("gather_weighted_planes")
         self.interp_faces_dev = knl.get_function("interp_faces")
@@ -184,8 +188,9 @@ class CUDASubgridUpdater(CUDAUpdates):
         self._real = config.sim_config.dtypes["float_or_double"]
 
         self._set_is_knls()
-        self._build_call_tables()
         precursors.attach_device(parent)
+        self._build_call_tables()
+        self._build_fused_specs()
 
     # ------------------------------------------------------------------
     # Kernels and call tables
@@ -193,11 +198,19 @@ class CUDASubgridUpdater(CUDAUpdates):
 
     def _set_is_knls(self):
         bld = _build_multi_knl(
-            self, [knl_subgrid_coupling.update_is_e, knl_subgrid_coupling.update_is_h]
+            self,
+            [
+                knl_subgrid_coupling.update_is_e,
+                knl_subgrid_coupling.update_is_h,
+                knl_subgrid_coupling.update_is_faces_e,
+                knl_subgrid_coupling.update_is_faces_h,
+            ],
         )
         knl = self.source_module(bld, options=config.sim_config.devices["nvcc_opts"])
         self.update_is_e_dev = knl.get_function("update_is_e")
         self.update_is_h_dev = knl.get_function("update_is_h")
+        self.update_is_faces_e_dev = knl.get_function("update_is_faces_e")
+        self.update_is_faces_h_dev = knl.get_function("update_is_faces_h")
         # This module's constants are the sub-grid's loss-painted coefficients
         self._copy_mat_coeffs(knl, knl)
 
@@ -253,6 +266,86 @@ class CUDASubgridUpdater(CUDAUpdates):
         ]
 
     @staticmethod
+    def _split_conflict_free(calls, name_index):
+        """Splits the six per-face calls into two groups such that no field
+        component appears twice within a group. The ring-box EDGE nodes
+        receive += contributions from two faces writing the same component;
+        within one launch those would be a read-modify-write race (this is
+        exactly the fused-kernel hazard - sequential launches are safe), so
+        each conflicting pair is separated. Every component appears exactly
+        twice, so a greedy first-fit 2-colouring always succeeds."""
+        group_a, group_b, seen_a = [], [], set()
+        for call in calls:
+            fname = call[name_index]
+            if fname not in seen_a:
+                group_a.append(call)
+                seen_a.add(fname)
+            else:
+                group_b.append(call)
+        return group_a, group_b
+
+    def _build_fused_specs(self):
+        """Builds the spec tables for the fused ring kernels (Phase 3):
+        6 per-face launches collapse into 2 conflict-free group launches."""
+        sel_e = {"Ex": 0, "Ey": 1, "Ez": 2}
+        sel_h = {"Hx": 0, "Hy": 1, "Hz": 2}
+        self._fused_is = {}
+        for key, calls, kind, sel in (
+            ("e", self._is_e_calls, "h", sel_e),
+            ("h", self._is_h_calls, "e", sel_h),
+        ):
+            offsets = self.precursors._fine[kind]["offsets"]
+            groups = []
+            for group in self._split_conflict_free(calls, 3):
+                rows = []
+                total = 0
+                for face, nwl, nwm, fname, name_l, name_u, lookup, sign_l, sign_u, co in group:
+                    off_l, shape_l = offsets[name_l]
+                    off_u, _ = offsets[name_u]
+                    rows.append(
+                        [face, nwl, nwm, sel[fname], int(off_l), int(off_u),
+                         int(shape_l[1]), lookup, sign_l, sign_u, co, total]
+                    )
+                    total += nwl * nwm
+                groups.append(
+                    {
+                        "specs_dev": self.grid.gpuarray.to_gpu(
+                            np.array(rows, dtype=np.int32)
+                        ),
+                        "n_specs": len(rows),
+                        "total": total,
+                    }
+                )
+            self._fused_is[key] = {"groups": groups, "kind": kind}
+
+        self._fused_os = {}
+        for key, calls, fsel, isel in (
+            ("e", self._os_e_calls, sel_e, sel_h),
+            ("h", self._os_h_calls, sel_h, sel_e),
+        ):
+            groups = []
+            for group in self._split_conflict_free(calls, 9):
+                rows = []
+                total = 0
+                for face, l_l, l_u, m_l, m_u, n_l, n_u, nwn, lookup, fname, incname, co, sign_n, sign_f, mid in group:
+                    rows.append(
+                        [face, int(l_l), int(l_u), int(m_l), int(m_u), int(n_l),
+                         int(n_u), int(nwn), lookup, fsel[fname], isel[incname],
+                         co, sign_n, sign_f, mid, total]
+                    )
+                    total += (l_u - l_l) * (m_u - m_l)
+                groups.append(
+                    {
+                        "specs_dev": self.grid.gpuarray.to_gpu(
+                            np.array(rows, dtype=np.int32)
+                        ),
+                        "n_specs": len(rows),
+                        "total": total,
+                    }
+                )
+            self._fused_os[key] = {"groups": groups}
+
+    @staticmethod
     def _bpg(total):
         return (int(np.ceil(total / 128)), 1, 1)
 
@@ -294,17 +387,46 @@ class CUDASubgridUpdater(CUDAUpdates):
                 grid=self._bpg(nwl * nwm),
             )
 
+    def _launch_is_fused(self, knl_func, key, offset, weights):
+        sg = self.grid
+        owx, owy, owz = self._ow
+        f = self._fused_is[key]
+        fine = self.precursors._fine[f["kind"]]
+        c1, c2 = weights
+        pre = "E" if key == "e" else "H"
+        for g in f["groups"]:
+            knl_func(
+                np.int32(owx),
+                np.int32(owy),
+                np.int32(owz),
+                np.int32(sg.os_f),
+                np.int32(offset),
+                np.int32(g["n_specs"]),
+                np.int32(g["total"]),
+                g["specs_dev"].gpudata,
+                sg.ID_dev.gpudata,
+                getattr(sg, f"{pre}x_dev").gpudata,
+                getattr(sg, f"{pre}y_dev").gpudata,
+                getattr(sg, f"{pre}z_dev").gpudata,
+                fine["dev_0"].gpudata,
+                fine["dev_1"].gpudata,
+                self._real(c1),
+                self._real(c2),
+                block=(128, 1, 1),
+                grid=self._bpg(g["total"]),
+            )
+
     def update_electric_is(self):
         """Sub-grid E on the OS planes from interpolated main-grid H."""
-        self._launch_is(
-            self.update_is_e_dev, self._is_e_calls, "h", 0, self.precursors.h_weights
+        self._launch_is_fused(
+            self.update_is_faces_e_dev, "e", 0, self.precursors.h_weights
         )
 
     def update_magnetic_is(self):
         """Sub-grid H half a cell outside the OS planes from interpolated
         main-grid E."""
-        self._launch_is(
-            self.update_is_h_dev, self._is_h_calls, "e", -1, self.precursors.e_weights
+        self._launch_is_fused(
+            self.update_is_faces_h_dev, "h", -1, self.precursors.e_weights
         )
 
     def _launch_os(self, knl_func, calls):
@@ -341,14 +463,41 @@ class CUDASubgridUpdater(CUDAUpdates):
                 grid=self._bpg((l_u - l_l) * (m_u - m_l)),
             )
 
+    def _launch_os_fused(self, knl_func, key):
+        sg = self.grid
+        G = self.G
+        f = self._fused_os[key]
+        fpre = "E" if key == "e" else "H"
+        ipre = "H" if key == "e" else "E"
+        for g in f["groups"]:
+            knl_func(
+                np.int32(g["n_specs"]),
+                np.int32(g["total"]),
+                g["specs_dev"].gpudata,
+                G.ID_dev.gpudata,
+                getattr(G, f"{fpre}x_dev").gpudata,
+                getattr(G, f"{fpre}y_dev").gpudata,
+                getattr(G, f"{fpre}z_dev").gpudata,
+                getattr(sg, f"{ipre}x_dev").gpudata,
+                getattr(sg, f"{ipre}y_dev").gpudata,
+                getattr(sg, f"{ipre}z_dev").gpudata,
+                np.int32(sg.Ex.shape[1]),
+                np.int32(sg.Ex.shape[2]),
+                np.int32(sg.ratio),
+                np.int32(0),
+                np.int32(sg.n_boundary_cells),
+                block=(128, 1, 1),
+                grid=self._bpg(g["total"]),
+            )
+
     def update_electric_os(self):
         """Main-grid E on the IS planes from collocated sub-grid H."""
-        self._launch_os(self.parent.update_electric_os_dev, self._os_e_calls)
+        self._launch_os_fused(self.parent.update_os_faces_electric_dev, "e")
 
     def update_magnetic_os(self):
         """Main-grid H half a cell outside the IS from collocated
         sub-grid E."""
-        self._launch_os(self.parent.update_magnetic_os_dev, self._os_h_calls)
+        self._launch_os_fused(self.parent.update_os_faces_magnetic_dev, "h")
 
     # ------------------------------------------------------------------
     # Sub-grid-local iteration bookkeeping (mirrors CPU SubgridUpdater)

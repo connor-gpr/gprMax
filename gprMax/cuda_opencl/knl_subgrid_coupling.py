@@ -244,6 +244,205 @@ update_electric_os = _update_os("electric")
 update_magnetic_os = _update_os("magnetic")
 
 
+def _update_is_faces(suffix, coeffs):
+    """Fused all-faces variant of update_is: one launch covers the six
+    per-face calls of an SHSG ring update. Per-row int32 spec (12 wide):
+    face, nwl, nwm, field_sel(0-2), inc_l_off, inc_u_off, pre_nm,
+    lookup_id, sign_l, sign_u, co, out_off (ascending thread partition).
+    The _0/_1 fine buffers arrive as base pointers (they pointer-swap
+    each snapshot); per-face offsets are baked into the spec."""
+    return {
+        "args_cuda": Template(
+            """
+                __global__ void update_is_faces_"""
+            + suffix
+            + """(int nwx,
+                                int nwy,
+                                int nwz,
+                                int n,
+                                int offset,
+                                int n_specs,
+                                int total,
+                                const int* __restrict__ specs,
+                                const unsigned int* __restrict__ ID,
+                                $REAL *F0,
+                                $REAL *F1,
+                                $REAL *F2,
+                                const $REAL* __restrict__ fine_0,
+                                const $REAL* __restrict__ fine_1,
+                                $REAL c1,
+                                $REAL c2)
+                    """
+        ),
+        "func": Template(
+            """
+    // Fused sub-grid ring correction: all six faces in one launch.
+
+    $CUDA_IDX
+
+    if (i >= total) return;
+
+    int sidx = 0;
+    while (sidx + 1 < n_specs && specs[(sidx + 1) * 12 + 11] <= i) sidx++;
+    const int* sp = specs + sidx * 12;
+
+    int local = i - sp[11];
+    int face = sp[0];
+    int nwm = sp[2];
+    int l = n + local / nwm;
+    int m = n + local % nwm;
+    int n_o = n + offset;
+
+    int i1, j1, k1, i2, j2, k2;
+    if (face == 1) {
+        i1 = l; j1 = m; k1 = n_o;
+        i2 = l; j2 = m; k2 = n + nwz;
+    } else if (face == 2) {
+        i1 = n_o; j1 = l; k1 = m;
+        i2 = n + nwx; j2 = l; k2 = m;
+    } else {
+        i1 = l; j1 = n_o; k1 = m;
+        i2 = l; j2 = n + nwy; k2 = m;
+    }
+
+    $REAL *field = (sp[3] == 0) ? F0 : (sp[3] == 1) ? F1 : F2;
+    int pidx = (l - n) * sp[6] + (m - n);
+    int lookup_id = sp[7];
+    int co = sp[10];
+
+    $REAL incl = c1 * fine_0[sp[4] + pidx] + c2 * fine_1[sp[4] + pidx];
+    int mat_l = ID[IDX4D_ID(lookup_id, i1, j1, k1)];
+    field[IDX3D_FIELDS(i1, j1, k1)] += """
+            + coeffs
+            + """[IDX2D_MAT(mat_l, co)] * incl * sp[8];
+
+    $REAL incu = c1 * fine_0[sp[5] + pidx] + c2 * fine_1[sp[5] + pidx];
+    int mat_u = ID[IDX4D_ID(lookup_id, i2, j2, k2)];
+    field[IDX3D_FIELDS(i2, j2, k2)] += """
+            + coeffs
+            + """[IDX2D_MAT(mat_u, co)] * incu * sp[9];
+    """
+        ),
+    }
+
+
+update_is_faces_e = _update_is_faces("e", "updatecoeffsE")
+update_is_faces_h = _update_is_faces("h", "updatecoeffsH")
+
+
+def _update_os_faces(kind):
+    """Fused all-faces variant of update_*_os: one launch covers the six
+    per-face IS-ring corrections. Per-row int32 spec (16 wide): face,
+    l_l, l_u, m_l, m_u, n_l, n_u, nwn, lookup_id, field_sel(0-2),
+    inc_sel(0-2), co, sign_n, sign_f, mid, out_off."""
+    if kind == "electric":
+        coeffs = "updatecoeffsE"
+        n_s_l = "nb - s * r - r + r / 2"
+        n_s_r = "nb + nwn + s * r + r / 2"
+    else:
+        coeffs = "updatecoeffsH"
+        n_s_l = "nb - r * s"
+        n_s_r = "nb + nwn + s * r"
+    return {
+        "args_cuda": Template(
+            """
+                __global__ void update_os_faces_"""
+            + kind
+            + """(int n_specs,
+                                int total,
+                                const int* __restrict__ specs,
+                                const unsigned int* __restrict__ ID,
+                                $REAL *F0,
+                                $REAL *F1,
+                                $REAL *F2,
+                                const $REAL* __restrict__ I0,
+                                const $REAL* __restrict__ I1,
+                                const $REAL* __restrict__ I2,
+                                int inc_ny,
+                                int inc_nz,
+                                int r,
+                                int s,
+                                int nb)
+                    """
+        ),
+        "func": Template(
+            """
+    // Fused main-grid ring correction: all six faces in one launch.
+
+    $CUDA_IDX
+
+    if (i >= total) return;
+
+    int sidx = 0;
+    while (sidx + 1 < n_specs && specs[(sidx + 1) * 16 + 15] <= i) sidx++;
+    const int* sp = specs + sidx * 16;
+
+    int local = i - sp[15];
+    int face = sp[0];
+    int l_l = sp[1];
+    int m_l = sp[3];
+    int ml_len = sp[4] - m_l;
+    int l = l_l + local / ml_len;
+    int m = m_l + local % ml_len;
+    int n_l = sp[5];
+    int n_u = sp[6];
+    int nwn = sp[7];
+    int mid = sp[14];
+
+    int n_s_l = """
+            + n_s_l
+            + """;
+    int n_s_r = """
+            + n_s_r
+            + """;
+    int os = nb - r * s;
+
+    int l_s = os + (l - l_l) * r + (mid == 1 ? r / 2 : 0);
+    int m_s = os + (m - m_l) * r + (mid == 1 ? 0 : r / 2);
+
+    int i0, j0, k0, i1, j1, k1, i2, j2, k2, i3, j3, k3;
+    if (face == 2) {
+        i0 = n_l; j0 = l; k0 = m;
+        i1 = n_s_l; j1 = l_s; k1 = m_s;
+        i2 = n_u; j2 = l; k2 = m;
+        i3 = n_s_r; j3 = l_s; k3 = m_s;
+    } else if (face == 3) {
+        i0 = l; j0 = n_l; k0 = m;
+        i1 = l_s; j1 = n_s_l; k1 = m_s;
+        i2 = l; j2 = n_u; k2 = m;
+        i3 = l_s; j3 = n_s_r; k3 = m_s;
+    } else {
+        i0 = l; j0 = m; k0 = n_l;
+        i1 = l_s; j1 = m_s; k1 = n_s_l;
+        i2 = l; j2 = m; k2 = n_u;
+        i3 = l_s; j3 = m_s; k3 = n_s_r;
+    }
+
+    $REAL *field = (sp[9] == 0) ? F0 : (sp[9] == 1) ? F1 : F2;
+    const $REAL* inc = (sp[10] == 0) ? I0 : (sp[10] == 1) ? I1 : I2;
+    int lookup_id = sp[8];
+    int co = sp[11];
+
+    int mat_n = ID[IDX4D_ID(lookup_id, i0, j0, k0)];
+    $REAL inc_n = inc[((size_t)(i1) * inc_ny + (j1)) * inc_nz + (k1)] * sp[12];
+    field[IDX3D_FIELDS(i0, j0, k0)] += """
+            + coeffs
+            + """[IDX2D_MAT(mat_n, co)] * inc_n;
+
+    int mat_f = ID[IDX4D_ID(lookup_id, i2, j2, k2)];
+    $REAL inc_f = inc[((size_t)(i3) * inc_ny + (j3)) * inc_nz + (k3)] * sp[13];
+    field[IDX3D_FIELDS(i2, j2, k2)] += """
+            + coeffs
+            + """[IDX2D_MAT(mat_f, co)] * inc_f;
+    """
+        ),
+    }
+
+
+update_os_faces_electric = _update_os_faces("electric")
+update_os_faces_magnetic = _update_os_faces("magnetic")
+
+
 # Gathers an arbitrary set of axis-aligned boxes ("planes") of the six
 # main-grid field arrays into one contiguous buffer, enabling a single
 # packed device-to-host transfer per precursor snapshot. Compiled into
