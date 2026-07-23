@@ -23,6 +23,7 @@ from typing import List, Tuple, Union
 
 import numpy as np
 
+import gprMax.config as config
 from gprMax.grid.fdtd_grid import FDTDGrid
 from gprMax.model import Model
 from gprMax.subgrids.grid import SubGridBaseGrid
@@ -381,6 +382,15 @@ class SubGridSHSG(SubGridBase):
         super().__init__(**kwargs)
 
     def build(self, model: Model) -> SubGridSHSGGrid:
-        sg = SubGridSHSGGrid(**self.kwargs)
+        if (
+            config.sim_config.general["solver"] == "cuda"
+            and config.sim_config.general.get("subgrid_gpu", False)
+        ):
+            # Device-resident sub-grid for the CUDA solver
+            from gprMax.subgrids.cuda_grid import CUDASubGridSHSG
+
+            sg = CUDASubGridSHSG(**self.kwargs)
+        else:
+            sg = SubGridSHSGGrid(**self.kwargs)
         self.setup(sg, model)
         return sg
