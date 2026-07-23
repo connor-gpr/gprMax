@@ -224,10 +224,14 @@ class CUDAPrecursorNodesFilteredBridge(DeviceBridgeMixin, PrecursorNodesFiltered
 class DeviceResidentMixin(DeviceBridgeMixin):
     """Fully device-resident precursors (Phase 2): the FIR filter and
     transverse weighting collapse into per-plane gather weights, and the
-    SciPy spline becomes precomputed separable weight matrices
-    (fine = Wx . coarse . Wy^T) built by pushing unit vectors through the
-    exact SciPy code path - exact for any interpolation degree. Steady
-    state does no PCIe transfers at all."""
+    SciPy spline becomes precomputed separable weight matrices applied in
+    two stages (tmp = Wx . coarse, fine = tmp . Wy^T) built by pushing
+    unit vectors through the exact SciPy code path - exact for any
+    interpolation degree. The staging is a hard requirement, not a
+    nicety: a one-pass Wx . C . Wy^T evaluation is O(n_cx*n_cy) per fine
+    node and at flagship face sizes costs more than the volume updates
+    of every grid combined. Steady state does no PCIe transfers at
+    all."""
 
     def attach_device(self, parent):
         self._parent = parent
@@ -301,7 +305,7 @@ class DeviceResidentMixin(DeviceBridgeMixin):
         gweights = []
         ispecs = []
         wx_all = []
-        wy_all = []
+        wyt_all = []
         coarse_off = 0
         wx_off = 0
         wy_off = 0
@@ -349,36 +353,46 @@ class DeviceResidentMixin(DeviceBridgeMixin):
             fine_name = obj[0][:-2]  # strip the _1 suffix
             fine_off, fine_shape = fine_offsets[fine_name]
             assert (n_fx, n_fy) == tuple(fine_shape), "fine shape mismatch"
+            # Wy is stored transposed (n_cy x n_fy) for coalesced stage-2
+            # reads; the packed offset accounting is unaffected.
             ispecs.append([coarse_off, int(fine_off), n_cx, n_cy, n_fx, n_fy, wx_off, wy_off])
             wx_all.append(Wx.ravel())
-            wy_all.append(Wy.ravel())
+            wyt_all.append(np.ascontiguousarray(Wy.T).ravel())
             wx_off += Wx.size
             wy_off += Wy.size
             coarse_off += size
 
-        # The offset-scan in the kernels needs ascending output offsets
+        # The offset-scans in the kernels need ascending output offsets;
+        # assigning the tmp offsets in fine-offset order keeps both the
+        # stage-2 (fine, col 1) and stage-1 (tmp, col 8) keys ascending.
         ispecs.sort(key=lambda s: s[1])
+        tmp_total = 0
+        for s in ispecs:
+            s.append(tmp_total)
+            tmp_total += s[4] * s[3]  # n_fx * n_cy
 
         self._stage[kind] = {
             "n_specs": np.int32(len(gspecs)),
             "coarse_total": np.int32(coarse_off),
             "fine_total": np.int32(self._fine[kind]["size"]),
+            "tmp_total": np.int32(tmp_total),
             "gspecs_dev": self._gpuarray.to_gpu(np.array(gspecs, dtype=np.int32)),
             "gweights_dev": self._gpuarray.to_gpu(
                 np.array(gweights, dtype=self._real)
             ),
             "coarse_dev": self._gpuarray.zeros(coarse_off, dtype=self._real),
+            "tmp_dev": self._gpuarray.zeros(tmp_total, dtype=self._real),
             "ispecs_dev": self._gpuarray.to_gpu(np.array(ispecs, dtype=np.int32)),
             "wx_dev": self._gpuarray.to_gpu(
                 np.concatenate(wx_all).astype(self._real)
             ),
-            "wy_dev": self._gpuarray.to_gpu(
-                np.concatenate(wy_all).astype(self._real)
+            "wyt_dev": self._gpuarray.to_gpu(
+                np.concatenate(wyt_all).astype(self._real)
             ),
         }
 
     # ------------------------------------------------------------------
-    # Snapshots: two kernel launches, zero transfers
+    # Snapshots: three kernel launches, zero transfers
     # ------------------------------------------------------------------
 
     def _snapshot(self, kind):
@@ -401,13 +415,22 @@ class DeviceResidentMixin(DeviceBridgeMixin):
             block=(128, 1, 1),
             grid=(int(np.ceil(int(st["coarse_total"]) / 128)), 1, 1),
         )
-        self._parent.interp_faces_dev(
+        self._parent.interp_stage1_dev(
+            st["n_specs"],
+            st["tmp_total"],
+            st["ispecs_dev"].gpudata,
+            st["wx_dev"].gpudata,
+            st["coarse_dev"].gpudata,
+            st["tmp_dev"].gpudata,
+            block=(128, 1, 1),
+            grid=(int(np.ceil(int(st["tmp_total"]) / 128)), 1, 1),
+        )
+        self._parent.interp_stage2_dev(
             st["n_specs"],
             st["fine_total"],
             st["ispecs_dev"].gpudata,
-            st["wx_dev"].gpudata,
-            st["wy_dev"].gpudata,
-            st["coarse_dev"].gpudata,
+            st["wyt_dev"].gpudata,
+            st["tmp_dev"].gpudata,
             f["dev_1"].gpudata,
             block=(128, 1, 1),
             grid=(int(np.ceil(int(st["fine_total"]) / 128)), 1, 1),

@@ -25,13 +25,19 @@ Replaces the CPU FIR/transverse-weighting/SciPy-spline pipeline:
   main-grid planes and combines them with fixed weights (the 3-tap FIR
   and the transverse H weighting collapse into per-plane weights
   computed once at init), writing the packed coarse buffer.
-- interp_faces: per face-component, applies the precomputed separable
-  spline weight matrices (fine = Wx . coarse . Wy^T), writing directly
-  into the packed fine _1 buffer used by the update_is kernels. The
-  matrices are built on host by pushing unit vectors through the exact
-  SciPy code path, so any interpolation degree is reproduced.
+- interp_stage1/interp_stage2: per face-component, apply the
+  precomputed separable spline weight matrices in two stages
+  (tmp = Wx . coarse, then fine = tmp . Wy^T), the second stage writing
+  directly into the packed fine _1 buffer used by the update_is kernels.
+  The matrices are built on host by pushing unit vectors through the
+  exact SciPy code path, so any interpolation degree is reproduced.
+  Staging matters: a one-pass evaluation is O(n_cx*n_cy) per fine node,
+  which at large face sizes dwarfs the volume updates (the cost of a
+  face grows ~nw^4); the staged form is O(n_cx)+O(n_cy) per node. Wy is
+  stored TRANSPOSED (n_cy x n_fy) so both stages read their weight and
+  input arrays coalesced along the thread index.
 
-Both are compiled into the main-grid module set (gather reads main-grid
+All are compiled into the main-grid module set (gather reads main-grid
 fields via the baked IDX3D_FIELDS); all per-face geometry arrives in
 spec tables, so a single launch covers all faces of one field type.
 """
@@ -102,51 +108,93 @@ gather_weighted_planes = {
     ),
 }
 
-# int32 specs, one row of 8 per face-component:
+# int32 specs, one row of 9 per face-component:
 #  0: coarse offset  1: fine offset  2: n_cx  3: n_cy  4: n_fx  5: n_fy
-#  6: Wx offset (row-major n_fx x n_cx)  7: Wy offset (n_fy x n_cy)
-interp_faces = {
+#  6: Wx offset (row-major n_fx x n_cx)
+#  7: WyT offset (row-major n_cy x n_fy - Wy stored transposed)
+#  8: tmp offset (row-major n_fx x n_cy staging buffer)
+# Rows are sorted so that both the fine (1) and tmp (8) offsets ascend,
+# which the linear spec scans in the kernels rely on.
+interp_stage1 = {
     "args_cuda": Template(
         """
-                __global__ void interp_faces(int n_specs,
+                __global__ void interp_stage1(int n_specs,
                                 int total,
                                 const int* __restrict__ specs,
                                 const $REAL* __restrict__ wx,
-                                const $REAL* __restrict__ wy,
                                 const $REAL* __restrict__ coarse,
-                                $REAL *fine)
+                                $REAL *tmp)
                     """
     ),
     "func": Template(
         """
-    // Separable spline interpolation: fine[a,b] = Wx[a,:] . C . Wy[b,:]^T
+    // Separable spline interpolation, stage 1: tmp[a,q] = Wx[a,:] . C[:,q]
+    // Consecutive threads share a row a and step q, so the coarse reads
+    // coalesce and the Wx row broadcasts across the warp.
 
     $CUDA_IDX
 
     if (i >= total) return;
 
     int sidx = 0;
-    while (sidx + 1 < n_specs && specs[(sidx + 1) * 8 + 1] <= i) sidx++;
-    const int* sp = specs + sidx * 8;
+    while (sidx + 1 < n_specs && specs[(sidx + 1) * 9 + 8] <= i) sidx++;
+    const int* sp = specs + sidx * 9;
+
+    int local = i - sp[8];
+    int n_cx = sp[2];
+    int n_cy = sp[3];
+    int a = local / n_cy;
+    int q = local % n_cy;
+
+    const $REAL* wxr = wx + sp[6] + (size_t)a * n_cx;
+    const $REAL* c = coarse + sp[0];
+
+    $REAL val = 0.0;
+    for (int p = 0; p < n_cx; p++) {
+        val += wxr[p] * c[(size_t)p * n_cy + q];
+    }
+    tmp[i] = val;
+    """
+    ),
+}
+
+interp_stage2 = {
+    "args_cuda": Template(
+        """
+                __global__ void interp_stage2(int n_specs,
+                                int total,
+                                const int* __restrict__ specs,
+                                const $REAL* __restrict__ wyt,
+                                const $REAL* __restrict__ tmp,
+                                $REAL *fine)
+                    """
+    ),
+    "func": Template(
+        """
+    // Separable spline interpolation, stage 2: fine[a,b] = tmp[a,:] . WyT[:,b]
+    // Consecutive threads share a row a and step b, so the WyT reads
+    // coalesce and the tmp row broadcasts across the warp.
+
+    $CUDA_IDX
+
+    if (i >= total) return;
+
+    int sidx = 0;
+    while (sidx + 1 < n_specs && specs[(sidx + 1) * 9 + 1] <= i) sidx++;
+    const int* sp = specs + sidx * 9;
 
     int local = i - sp[1];
-    int n_cx = sp[2];
     int n_cy = sp[3];
     int n_fy = sp[5];
     int a = local / n_fy;
     int b = local % n_fy;
 
-    const $REAL* wxr = wx + sp[6] + (size_t)a * n_cx;
-    const $REAL* wyr = wy + sp[7] + (size_t)b * n_cy;
-    const $REAL* c = coarse + sp[0];
+    const $REAL* t = tmp + sp[8] + (size_t)a * n_cy;
+    const $REAL* wyc = wyt + sp[7] + b;
 
     $REAL val = 0.0;
-    for (int p = 0; p < n_cx; p++) {
-        $REAL row = 0.0;
-        for (int q = 0; q < n_cy; q++) {
-            row += c[(size_t)p * n_cy + q] * wyr[q];
-        }
-        val += wxr[p] * row;
+    for (int q = 0; q < n_cy; q++) {
+        val += t[q] * wyc[(size_t)q * n_fy];
     }
     fine[i] = val;
     """

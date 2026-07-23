@@ -96,7 +96,11 @@ def build_parent(shape):
             "CUDA_IDX": "int i = blockIdx.x * blockDim.x + threadIdx.x;",
         }
         parts = [common]
-        for kf in (knl_precursors.gather_weighted_planes, knl_precursors.interp_faces):
+        for kf in (
+            knl_precursors.gather_weighted_planes,
+            knl_precursors.interp_stage1,
+            knl_precursors.interp_stage2,
+        ):
             parts.append(
                 kf["args_cuda"].substitute(subs_args)
                 + "{"
@@ -117,7 +121,8 @@ def build_parent(shape):
         drv=drv,
         grid=grid,
         gather_weighted_planes_dev=mod.get_function("gather_weighted_planes"),
-        interp_faces_dev=mod.get_function("interp_faces"),
+        interp_stage1_dev=mod.get_function("interp_stage1"),
+        interp_stage2_dev=mod.get_function("interp_stage2"),
     )
 
 

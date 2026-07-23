@@ -14,15 +14,29 @@ fallback and reference.
   `[0.25, 0.5, 0.25]` and the transverse H bracketing-pair weights
   collapse into a single weight vector per face-component (filtered H:
   `[0.25c1, 0.5c1+0.25c2, 0.25c1+0.5c2, 0.25c2]`).
-- `interp_faces` (one launch): `fine = Wx · coarse · Wyᵀ` per
-  face-component with separable weight matrices probed through the exact
-  SciPy `RectBivariateSpline` code path at init (unit vectors + partition
-  of unity), exact for any `interpolation` degree; an init-time assertion
-  verifies `Wx·F·Wyᵀ` reproduces SciPy on random data to 1e-11·scale.
-  Output writes directly into the packed fine `_1` buffer used by the
-  `update_is` kernels; rollover stays a device pointer swap.
-- Per main iteration the precursor cost is now 4 kernel launches total
-  (2 per field type), replacing 4 packed PCIe transfers + host SciPy.
+- `interp_stage1` + `interp_stage2` (one launch each): `fine = Wx ·
+  coarse · Wyᵀ` per face-component, evaluated STAGED (`tmp = Wx·C`, then
+  `fine = tmp·Wyᵀ`), with separable weight matrices probed through the
+  exact SciPy `RectBivariateSpline` code path at init (unit vectors +
+  partition of unity), exact for any `interpolation` degree; an
+  init-time assertion verifies `Wx·F·Wyᵀ` reproduces SciPy on random
+  data to 1e-11·scale. Output writes directly into the packed fine `_1`
+  buffer used by the `update_is` kernels; rollover stays a device
+  pointer swap. Wy is stored transposed so both stages read coalesced.
+
+  *2026-07-23 rework:* the original one-launch `interp_faces` evaluated
+  the full `Wx[a,:]·C·Wy[b,:]ᵀ` sum per fine node — O(n_cx·n_cy) each,
+  ~nw⁴ per xy-face. Invisible at validation sizes (nw 12–20), it cost
+  ~302 GFLOP fp64 per coarse step on the flagship measured_2 model
+  (nw 528/534): ~325 ms of the observed 351 ms/step, making the GPU
+  subgrid run 6.5× SLOWER than the full-fine-resolution GPU baseline.
+  The staged form is O(n_cx)+O(n_cy) per node (~2.4 GFLOP/step, ~127×
+  less). Banded/local weights were considered and rejected: for
+  `interpolation >= 2` the interpolating-spline cardinal weights have
+  global support (exponential decay, never exactly zero), so truncation
+  would break the exact-SciPy guarantee the unit tests pin.
+- Per main iteration the precursor cost is now 6 kernel launches total
+  (3 per field type), replacing 4 packed PCIe transfers + host SciPy.
 
 ## Validation
 

@@ -126,7 +126,8 @@ class CUDASubgridUpdates(CUDAUpdates, HSGCapable):
                 knl_subgrid_coupling.update_os_faces_magnetic,
                 knl_subgrid_coupling.pack_planes,
                 knl_precursors.gather_weighted_planes,
-                knl_precursors.interp_faces,
+                knl_precursors.interp_stage1,
+                knl_precursors.interp_stage2,
             ],
         )
         knl = self.source_module(bld, options=config.sim_config.devices["nvcc_opts"])
@@ -136,7 +137,8 @@ class CUDASubgridUpdates(CUDAUpdates, HSGCapable):
         self.update_os_faces_magnetic_dev = knl.get_function("update_os_faces_magnetic")
         self.pack_planes_dev = knl.get_function("pack_planes")
         self.gather_weighted_planes_dev = knl.get_function("gather_weighted_planes")
-        self.interp_faces_dev = knl.get_function("interp_faces")
+        self.interp_stage1_dev = knl.get_function("interp_stage1")
+        self.interp_stage2_dev = knl.get_function("interp_stage2")
         # Constants are per-module: this module's coefficients must include
         # the SHSG loss rows painted on the main grid.
         self._copy_mat_coeffs(knl, knl)
