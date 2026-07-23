@@ -216,3 +216,208 @@ class CUDAPrecursorNodesBridge(DeviceBridgeMixin, PrecursorNodes):
 
 class CUDAPrecursorNodesFilteredBridge(DeviceBridgeMixin, PrecursorNodesFiltered):
     pass
+
+
+class DeviceResidentMixin(DeviceBridgeMixin):
+    """Fully device-resident precursors (Phase 2): the FIR filter and
+    transverse weighting collapse into per-plane gather weights, and the
+    SciPy spline becomes precomputed separable weight matrices
+    (fine = Wx . coarse . Wy^T) built by pushing unit vectors through the
+    exact SciPy code path - exact for any interpolation degree. Steady
+    state does no PCIe transfers at all."""
+
+    def attach_device(self, parent):
+        self._parent = parent
+        self._drv = parent.drv
+        self._gpuarray = parent.grid.gpuarray
+        self._real = self.ex_front_1.dtype.type
+
+        self.e_weights = (0.0, 1.0)
+        self.h_weights = (0.0, 1.0)
+
+        self._fine = {}
+        self._build_fine("e", self.fn_e)
+        self._build_fine("h", self.fn_m)
+
+        self._wcache = {}
+        self._stage = {}
+        self._build_stage("e", self.electric_slices, self.fn_e)
+        self._build_stage("h", self.magnetic_slices, self.fn_m)
+
+    # ------------------------------------------------------------------
+    # Spec/weight construction (once per model build)
+    # ------------------------------------------------------------------
+
+    def _plane_weights(self, obj, n_planes):
+        """Per-plane combination weights: FIR taps and, for H, the
+        transverse bracketing-pair weights (mirrors get_transverse_* and
+        the CPU update_magnetic weighting)."""
+        name = obj[0]
+        if name.startswith("e"):
+            return [1.0] if n_planes == 1 else [0.25, 0.5, 0.25]
+        w = self.l_weight if ("left" in name or "bottom" in name or "front" in name) else self.r_weight
+        c1, c2 = calculate_weighting_coefficients(w, self.ratio)
+        if n_planes == 2:
+            return [c1, c2]
+        return [0.25 * c1, 0.5 * c1 + 0.25 * c2, 0.25 * c1 + 0.5 * c2, 0.25 * c2]
+
+    def _weight_matrices(self, coords):
+        """Separable spline weight matrices for one face's coordinate set,
+        probed through the exact SciPy interpolation path."""
+        x, z, x_sg, z_sg = coords
+        key = (len(x), len(z), float(x[0]), float(z[0]))
+        if key in self._wcache:
+            return self._wcache[key]
+        n_cx, n_cy = len(x), len(z)
+        n_fx, n_fy = len(x_sg), len(z_sg)
+        Wx = np.empty((n_fx, n_cx))
+        Wy = np.empty((n_fy, n_cy))
+        for p in range(n_cx):
+            F = np.zeros((n_cx, n_cy))
+            F[p, :] = 1.0
+            Wx[:, p] = self.interpolate_to_sub_grid(F, coords)[:, 0]
+        for q in range(n_cy):
+            F = np.zeros((n_cx, n_cy))
+            F[:, q] = 1.0
+            Wy[:, q] = self.interpolate_to_sub_grid(F, coords)[0, :]
+        # Exactness check against the SciPy path on random data
+        rng = np.random.default_rng(0)
+        F = rng.standard_normal((n_cx, n_cy))
+        ref = self.interpolate_to_sub_grid(F, coords)
+        got = Wx @ F @ Wy.T
+        scale = np.max(np.abs(ref)) or 1.0
+        if np.max(np.abs(got - ref)) > 1e-11 * scale:
+            raise ValueError("separable weight matrices do not reproduce SciPy")
+        self._wcache[key] = (Wx, Wy)
+        return Wx, Wy
+
+    def _build_stage(self, kind, descriptors, names):
+        gspecs = []
+        gweights = []
+        ispecs = []
+        wx_all = []
+        wy_all = []
+        coarse_off = 0
+        wx_off = 0
+        wy_off = 0
+        fine_offsets = self._fine[kind]["offsets"]
+
+        for obj in descriptors:
+            field = obj[-1]
+            fid = next(
+                i for i, n in enumerate(_FIELD_IDS) if getattr(self, n) is field
+            )
+            planes = obj[2:-1]
+            n_planes = len(planes)
+            weights = self._plane_weights(obj, n_planes)
+            starts = []
+            counts = None
+            for slc in planes:
+                st, ct = [], []
+                for ax in slc:
+                    if isinstance(ax, slice):
+                        st.append(int(ax.start))
+                        ct.append(int(ax.stop - ax.start))
+                    else:
+                        st.append(int(ax))
+                        ct.append(1)
+                starts.append(st)
+                counts = ct
+            while len(starts) < 4:
+                starts.append(starts[0])
+            weights = weights + [0.0] * (4 - n_planes)
+            size = counts[0] * counts[1] * counts[2]
+
+            gspecs.append(
+                [fid]
+                + starts[0] + starts[1] + starts[2] + starts[3]
+                + counts
+                + [coarse_off, n_planes]
+            )
+            gweights.append(weights)
+
+            coords = obj[1]
+            Wx, Wy = self._weight_matrices(coords)
+            n_fx, n_cx = Wx.shape
+            n_fy, n_cy = Wy.shape
+            assert n_cx * n_cy == size, "coarse plane/coord size mismatch"
+            fine_name = obj[0][:-2]  # strip the _1 suffix
+            fine_off, fine_shape = fine_offsets[fine_name]
+            assert (n_fx, n_fy) == tuple(fine_shape), "fine shape mismatch"
+            ispecs.append([coarse_off, int(fine_off), n_cx, n_cy, n_fx, n_fy, wx_off, wy_off])
+            wx_all.append(Wx.ravel())
+            wy_all.append(Wy.ravel())
+            wx_off += Wx.size
+            wy_off += Wy.size
+            coarse_off += size
+
+        # The offset-scan in the kernels needs ascending output offsets
+        ispecs.sort(key=lambda s: s[1])
+
+        self._stage[kind] = {
+            "n_specs": np.int32(len(gspecs)),
+            "coarse_total": np.int32(coarse_off),
+            "fine_total": np.int32(self._fine[kind]["size"]),
+            "gspecs_dev": self._gpuarray.to_gpu(np.array(gspecs, dtype=np.int32)),
+            "gweights_dev": self._gpuarray.to_gpu(
+                np.array(gweights, dtype=self._real)
+            ),
+            "coarse_dev": self._gpuarray.zeros(coarse_off, dtype=self._real),
+            "ispecs_dev": self._gpuarray.to_gpu(np.array(ispecs, dtype=np.int32)),
+            "wx_dev": self._gpuarray.to_gpu(
+                np.concatenate(wx_all).astype(self._real)
+            ),
+            "wy_dev": self._gpuarray.to_gpu(
+                np.concatenate(wy_all).astype(self._real)
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # Snapshots: two kernel launches, zero transfers
+    # ------------------------------------------------------------------
+
+    def _snapshot(self, kind):
+        f = self._fine[kind]
+        f["dev_0"], f["dev_1"] = f["dev_1"], f["dev_0"]
+        st = self._stage[kind]
+        g = self._parent.grid
+        self._parent.gather_weighted_planes_dev(
+            st["n_specs"],
+            st["coarse_total"],
+            st["gspecs_dev"].gpudata,
+            st["gweights_dev"].gpudata,
+            st["coarse_dev"].gpudata,
+            g.Ex_dev.gpudata,
+            g.Ey_dev.gpudata,
+            g.Ez_dev.gpudata,
+            g.Hx_dev.gpudata,
+            g.Hy_dev.gpudata,
+            g.Hz_dev.gpudata,
+            block=(128, 1, 1),
+            grid=(int(np.ceil(int(st["coarse_total"]) / 128)), 1, 1),
+        )
+        self._parent.interp_faces_dev(
+            st["n_specs"],
+            st["fine_total"],
+            st["ispecs_dev"].gpudata,
+            st["wx_dev"].gpudata,
+            st["wy_dev"].gpudata,
+            st["coarse_dev"].gpudata,
+            f["dev_1"].gpudata,
+            block=(128, 1, 1),
+            grid=(int(np.ceil(int(st["fine_total"]) / 128)), 1, 1),
+        )
+
+    def update_electric(self):
+        self._snapshot("e")
+
+    def update_magnetic(self):
+        self._snapshot("h")
+
+
+class CUDAPrecursorNodes(DeviceResidentMixin, PrecursorNodes):
+    pass
+
+
+class CUDAPrecursorNodesFiltered(DeviceResidentMixin, PrecursorNodesFiltered):
+    pass

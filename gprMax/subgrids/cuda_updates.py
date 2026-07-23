@@ -49,13 +49,13 @@ import logging
 import numpy as np
 
 import gprMax.config as config
-from gprMax.cuda_opencl import knl_subgrid_coupling
+from gprMax.cuda_opencl import knl_precursors, knl_subgrid_coupling
 from gprMax.model import Model
 from gprMax.updates.cuda_updates import CUDAUpdates
 from gprMax.updates.updates import HSGCapable
 
 from .cuda_grid import CUDASubGridSHSG
-from .cuda_precursors import CUDAPrecursorNodesBridge, CUDAPrecursorNodesFilteredBridge
+from .cuda_precursors import CUDAPrecursorNodes, CUDAPrecursorNodesFiltered
 from .updates import OSSurfaceView
 
 logger = logging.getLogger(__name__)
@@ -108,9 +108,9 @@ def create_updates(model: Model):
     for sg in model.subgrids:
         surface = OSSurfaceView(sg)
         if sg.filter:
-            precursors = CUDAPrecursorNodesFilteredBridge(model.G, surface)
+            precursors = CUDAPrecursorNodesFiltered(model.G, surface)
         else:
-            precursors = CUDAPrecursorNodesBridge(model.G, surface)
+            precursors = CUDAPrecursorNodes(model.G, surface)
         updaters.append(CUDASubgridUpdater(sg, precursors, model.G, updates))
     updates.updaters = updaters
     return updates
@@ -132,12 +132,16 @@ class CUDASubgridUpdates(CUDAUpdates, HSGCapable):
                 knl_subgrid_coupling.update_electric_os,
                 knl_subgrid_coupling.update_magnetic_os,
                 knl_subgrid_coupling.pack_planes,
+                knl_precursors.gather_weighted_planes,
+                knl_precursors.interp_faces,
             ],
         )
         knl = self.source_module(bld, options=config.sim_config.devices["nvcc_opts"])
         self.update_electric_os_dev = knl.get_function("update_electric_os")
         self.update_magnetic_os_dev = knl.get_function("update_magnetic_os")
         self.pack_planes_dev = knl.get_function("pack_planes")
+        self.gather_weighted_planes_dev = knl.get_function("gather_weighted_planes")
+        self.interp_faces_dev = knl.get_function("interp_faces")
         # Constants are per-module: this module's coefficients must include
         # the SHSG loss rows painted on the main grid.
         self._copy_mat_coeffs(knl, knl)
