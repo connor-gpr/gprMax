@@ -45,6 +45,20 @@ Including finely detailed objects or regions of high dielectric strength in FDTD
 
 Subgridding functionality requires using our :ref:`Python API <input-api>`.
 
+Sub-gridded models normally run on the CPU solver. An **experimental**
+CUDA path exists for ``SubGridSHSG`` models: pass ``subgrid_gpu=True``
+together with ``gpu`` to ``gprMax.run()``. The whole model - both grids,
+the Huygens-surface exchanges, and the precursor interpolation - then
+runs on the GPU in double precision with no per-iteration host-device
+transfers. Restrictions: ``SubGridSHSG`` only (the plain ``SubGridHSG``
+stays CPU-only), and transmission lines and discrete plane waves are
+rejected under any GPU solver (they are only stepped by the CPU
+updates; previously they were silently skipped). Dispersive materials
+are supported. An experimental ``precision="single"`` override exists
+but is validated only for accuracy-tolerant workloads - double
+precision is the recommended (and default) configuration for
+sub-gridding.
+
 .. _examples-subgrid:
 
 High dielectric example

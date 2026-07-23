@@ -160,27 +160,13 @@ class TestSourceFeatureGates:
 
 
 class TestCUDASubgridFactoryGates:
-    """create_updates (CUDA subgrid factory) rejects unsupported models."""
+    """create_updates (CUDA subgrid factory) rejects unsupported models.
+    (Dispersive models are supported since the dispersive phase - their
+    correctness is covered by the full-model Debye cross-validation.)"""
 
-    def test_dispersive_anywhere_raises(self, monkeypatch):
+    def test_plain_hsg_subgrid_raises(self):
         from gprMax.subgrids import cuda_updates as scu
 
-        monkeypatch.setattr(
-            config,
-            "get_model_config",
-            lambda: SimpleNamespace(materials={"maxpoles": 1}),
-        )
-        with pytest.raises(ValueError):
-            scu.create_updates(SimpleNamespace(subgrids=[], G=None))
-
-    def test_plain_hsg_subgrid_raises(self, monkeypatch):
-        from gprMax.subgrids import cuda_updates as scu
-
-        monkeypatch.setattr(
-            config,
-            "get_model_config",
-            lambda: SimpleNamespace(materials={"maxpoles": 0}),
-        )
         fake_hsg = SimpleNamespace(name="sg")  # not a CUDASubGridSHSG
         with pytest.raises(ValueError):
             scu.create_updates(SimpleNamespace(subgrids=[fake_hsg], G=None))

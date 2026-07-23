@@ -78,15 +78,6 @@ def _build_multi_knl(updates, knl_funcs):
 def create_updates(model: Model):
     """Returns the CUDA updates object for a sub-gridded model."""
 
-    if config.get_model_config().materials["maxpoles"] > 0:
-        logger.exception(
-            "Dispersive materials anywhere in the model (including "
-            "main-grid-only) are not yet supported with subgrid_gpu - "
-            "dispersive sub-grid support is a later phase. Use the CPU "
-            "solver."
-        )
-        raise ValueError
-
     for sg in model.subgrids:
         if not isinstance(sg, CUDASubGridSHSG):
             logger.exception(
