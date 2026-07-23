@@ -34,7 +34,7 @@ from .updates.cpu_updates import CPUUpdates
 from .updates.cuda_updates import CUDAUpdates
 from .updates.opencl_updates import OpenCLUpdates
 from .updates.metal_updates import MetalUpdates
-from .updates.updates import Updates
+from .updates.updates import HSGCapable, Updates
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class Solver:
           
             if isinstance(self.updates, MPIUpdates):
                 self.updates.halo_swap_magnetic()
-            if isinstance(self.updates, SubgridUpdates):
+            if isinstance(self.updates, HSGCapable):
                 self.updates.hsg_2()
 
             #time loop at this point is still at working on fields updated to be at n+1  
@@ -87,7 +87,7 @@ class Solver:
                 self.updates.update_plane_waves_electric(iteration)      
 
            # TODO: Increment iteration here if add Model to Solver
-            if isinstance(self.updates, SubgridUpdates):
+            if isinstance(self.updates, HSGCapable):
                 self.updates.hsg_1()
                          
             self.updates.update_electric_b()
@@ -127,11 +127,43 @@ def create_solver(model: Model) -> Solver:
             "The model contains sub-grids but sub-gridding is not enabled. "
             "Pass subgrid=True to gprMax.run()."
         )
+
+    # Feature gates: sources that are only stepped by the CPU updates
+    # classes must not be silently dropped by the device solvers.
+    if config.sim_config.general["solver"] != "cpu":
+        for g in [model.G] + list(model.subgrids):
+            if g.transmissionlines:
+                logger.exception(
+                    "Transmission lines are not supported by the CUDA, "
+                    "OpenCL, or Metal solvers - they would be silently "
+                    "skipped. Use the CPU solver or a voltage source."
+                )
+                raise ValueError
+            if g.discreteplanewaves:
+                logger.exception(
+                    "Discrete plane waves are not supported by the CUDA, "
+                    "OpenCL, or Metal solvers - they would be silently "
+                    "skipped. Use the CPU solver."
+                )
+                raise ValueError
+    for sg in model.subgrids:
+        if sg.discreteplanewaves:
+            logger.exception(
+                "Discrete plane waves are not supported inside sub-grids "
+                "(they are never time-stepped there)."
+            )
+            raise ValueError
+
     if config.sim_config.general["subgrid"]:
         updates = create_subgrid_updates(model)
-        if config.get_model_config().materials["maxpoles"] != 0:
+        if (
+            isinstance(updates, SubgridUpdates)
+            and config.get_model_config().materials["maxpoles"] != 0
+        ):
             # Set dispersive update functions for both SubgridUpdates and
-            # SubgridUpdaters subclasses
+            # SubgridUpdaters subclasses. This is a CPU/Cython-only
+            # mechanism: the CUDA subgrid path handles dispersive updates
+            # through kernel templating instead.
             updates.set_dispersive_updates()
             for u in updates.updaters:
                 u.set_dispersive_updates()

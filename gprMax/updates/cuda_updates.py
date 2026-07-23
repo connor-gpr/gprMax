@@ -44,10 +44,16 @@ logger = logging.getLogger(__name__)
 class CUDAUpdates(Updates[CUDAGrid]):
     """Defines update functions for GPU-based (CUDA) solver."""
 
-    def __init__(self, G: CUDAGrid):
+    def __init__(self, G: CUDAGrid, ctx=None):
         """
         Args:
             G: CUDAGrid class describing a grid in a model.
+            ctx: optional existing pycuda context to run in. When given,
+                this instance shares it (and never pops it); when omitted,
+                a context is created on the configured device and owned
+                (popped in cleanup). Sharing is required when several
+                updates objects drive grids on one device, e.g. the main
+                grid and its sub-grids.
         """
         super().__init__(G)
 
@@ -56,9 +62,15 @@ class CUDAUpdates(Updates[CUDAGrid]):
         self.source_module = getattr(import_module("pycuda.compiler"), "SourceModule")
         self.drv.init()
 
-        # Create device handle and context on specific GPU device (and make it current context)
+        # Create device handle and context on specific GPU device (and make
+        # it current context), or adopt the caller's context.
         self.dev = config.get_model_config().device["dev"]
-        self.ctx = self.dev.make_context()
+        if ctx is None:
+            self.ctx = self.dev.make_context()
+            self._ctx_owner = True
+        else:
+            self.ctx = ctx
+            self._ctx_owner = False
 
         # Set common substitutions for use in kernels
         # Substitutions in function arguments
@@ -622,7 +634,8 @@ class CUDAUpdates(Updates[CUDAGrid]):
                 )
 
     def cleanup(self):
-        """Cleanup GPU context."""
-        # Remove context from top of stack and clear
-        self.ctx.pop()
+        """Cleanup GPU context (a shared context is popped only by its
+        owning instance)."""
+        if self._ctx_owner and self.ctx is not None:
+            self.ctx.pop()
         self.ctx = None

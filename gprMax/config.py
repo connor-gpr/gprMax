@@ -317,20 +317,50 @@ class SimulationConfig:
             self.devices["devs"] = detect_metal()
 
         # Subgrids
+        self.general["subgrid_gpu"] = bool(getattr(self.args, "subgrid_gpu", False))
         if hasattr(self.args, "subgrid") and self.args.subgrid:
             self.general["subgrid"] = self.args.subgrid
             # Double precision should be used with subgrid for best accuracy
             self.general["precision"] = "double"
-            if (self.general["subgrid"] and self.general["solver"] == "cuda") or (
-                self.general["subgrid"] and self.general["solver"] == "opencl") or (
-                self.general["subgrid"] and self.general["solver"] == "metal"
-            ):
+            if self.general["solver"] == "cuda" and self.general["subgrid_gpu"]:
+                # Experimental device-resident SHSG subgrid solver: keep the
+                # subgrid double-precision rule on the GPU.
+                logger.warning(
+                    "CUDA sub-gridding is experimental: only SubGridSHSG "
+                    "models are supported and the solver runs in double "
+                    "precision."
+                )
+            elif self.general["solver"] == "cuda":
                 logger.error(
                     "You cannot currently use CUDA, OpenCL, or Metal based solvers with models that contain sub-grids."
                 )
                 raise ValueError
+            elif self.general["solver"] == "opencl":
+                logger.error("Sub-grids are not yet supported with the OpenCL solver.")
+                raise ValueError
+            elif self.general["solver"] == "metal":
+                logger.error(
+                    "Sub-grids are unsupported with the Metal solver - Metal has no double-precision support."
+                )
+                raise ValueError
         else:
             self.general["subgrid"] = False
+
+        # Optional explicit precision override (API only). Used by the
+        # fp64 CUDA validation gate and the experimental single-precision
+        # subgrid mode; loosening the subgrid double rule is at the user's
+        # risk.
+        precision = getattr(self.args, "precision", None)
+        if precision is not None:
+            if precision not in ("single", "double"):
+                logger.error("precision must be 'single' or 'double'.")
+                raise ValueError
+            if self.general["subgrid"] and precision == "single":
+                logger.warning(
+                    "Running sub-grids in single precision is experimental - "
+                    "double precision is the validated configuration."
+                )
+            self.general["precision"] = precision
 
         # Translate user coordinates of objects in subgrids from the
         # main grid (global) coordinate system. May not exist if user

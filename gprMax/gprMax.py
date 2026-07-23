@@ -39,7 +39,9 @@ args_defaults = {
     "opencl": None,
     "metal": None,
     "subgrid": False,
+    "subgrid_gpu": False,
     "autotranslate": True,
+    "precision": None,
     "geometry_only": False,
     "geometry_fixed": False,
     "write_processed": False,
@@ -88,6 +90,16 @@ help_msg = {
         "(bool, opt): Flag to use sub-gridding. Enabled automatically when any scene"
         " contains a sub-grid."
     ),
+    "subgrid_gpu": (
+        "(bool, opt): Experimental - allow sub-gridded (SubGridSHSG only) models to run"
+        " on the CUDA solver. Requires the gpu argument; the solver runs in double"
+        " precision. Off by default."
+    ),
+    "precision": (
+        "(str, opt): Override the numerical precision ('single' or 'double') chosen by"
+        " the solver selection. Intended for validation and the experimental"
+        " single-precision subgrid mode."
+    ),
     "autotranslate": (
         "(bool, opt): For sub-gridding - auto translate objects with main grid coordinates to their"
         " equivalent local grid coordinate within the subgrid. Defaults to on. If this option is"
@@ -134,7 +146,9 @@ def run(
     opencl=args_defaults["opencl"],
     metal=args_defaults["metal"],
     subgrid=args_defaults["subgrid"],
+    subgrid_gpu=args_defaults["subgrid_gpu"],
     autotranslate=args_defaults["autotranslate"],
+    precision=args_defaults["precision"],
     geometry_only=args_defaults["geometry_only"],
     geometry_fixed=args_defaults["geometry_fixed"],
     write_processed=args_defaults["write_processed"],
@@ -180,6 +194,13 @@ def run(
             Metal GPU device ID(s) for specific GPU card(s).
         subgrid: optional boolean to use sub-gridding. Enabled
             automatically when any scene contains a sub-grid.
+        subgrid_gpu: optional boolean (experimental) to allow sub-gridded
+            models (SubGridSHSG only) to run on the CUDA solver. Requires
+            the gpu argument; the solver runs in double precision.
+        precision: optional string ('single'/'double') overriding the
+            precision chosen by the solver selection. Intended for
+            validation and the experimental single-precision subgrid
+            mode.
         autotranslate: optional boolean for sub-gridding to auto
             translate objects with main grid coordinates to their
             equivalent local grid coordinate within the subgrid.
@@ -220,7 +241,9 @@ def run(
             "opencl": opencl,
             "metal": metal,
             "subgrid": subgrid,
+            "subgrid_gpu": subgrid_gpu,
             "autotranslate": autotranslate,
+            "precision": precision,
             "geometry_only": geometry_only,
             "geometry_fixed": geometry_fixed,
             "write_processed": write_processed,

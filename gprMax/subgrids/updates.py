@@ -19,11 +19,13 @@
 
 import logging
 
+import gprMax.config as config
 from gprMax.grid.fdtd_grid import FDTDGrid
 from gprMax.model import Model
 from gprMax.subgrids.grid import SubGridBaseGrid
 
 from ..updates.cpu_updates import CPUUpdates
+from ..updates.updates import HSGCapable
 from .precursor_nodes import PrecursorNodes, PrecursorNodesFiltered
 from .subgrid_hsg import SubGridHSG
 from .subgrid_shsg import SubGridSHSG
@@ -54,7 +56,19 @@ class OSSurfaceView:
 
 
 def create_updates(model: Model):
-    """Return the solver for the given subgrids."""
+    """Return the updates object for the given subgrids, dispatched on the
+    configured solver. The CPU path is the default; the CUDA path is only
+    reachable with subgrid_gpu=True (enforced in config)."""
+    solver = config.sim_config.general["solver"]
+    if solver == "cuda":
+        from .cuda_updates import create_updates as create_cuda_updates
+
+        return create_cuda_updates(model)
+    if solver != "cpu":
+        # config already rejects these combinations; guard against drift
+        logger.exception(f"Sub-grids are not supported with the {solver} solver")
+        raise ValueError
+
     updaters = []
 
     for sg in model.subgrids:
@@ -80,7 +94,7 @@ def create_updates(model: Model):
     return updates
 
 
-class SubgridUpdates(CPUUpdates):
+class SubgridUpdates(CPUUpdates, HSGCapable):
     """Updates for subgrids."""
 
     def __init__(self, G, updaters):

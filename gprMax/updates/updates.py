@@ -26,6 +26,26 @@ from gprMax.grid.fdtd_grid import FDTDGrid
 GridType = TypeVar("GridType", bound=FDTDGrid)
 
 
+class HSGCapable(ABC):
+    """Protocol for updates objects that drive Huygens subgrids.
+
+    The solver calls hsg_2() after the main-grid magnetic update and
+    hsg_1() after the main-grid electric update (part A). Both the CPU
+    SubgridUpdates and the CUDA subgrid updates implement this, so the
+    solver gates on the capability rather than on a concrete backend.
+    """
+
+    @abstractmethod
+    def hsg_1(self) -> None:
+        """Updates the subgrids over the first phase (electric exchange)."""
+        pass
+
+    @abstractmethod
+    def hsg_2(self) -> None:
+        """Updates the subgrids over the second phase (magnetic exchange)."""
+        pass
+
+
 class Updates(Generic[GridType], ABC):
     """Defines update functions for a solver."""
 

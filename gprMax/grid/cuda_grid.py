@@ -1,5 +1,5 @@
 # Copyright (C) 2015-2025: The University of Edinburgh, United Kingdom
-#                 Authors: Craig Warren, Antonis Giannopoulos, John Hartley, 
+#                 Authors: Craig Warren, Antonis Giannopoulos, John Hartley,
 #                          and Nathan Mannall
 #
 # This file is part of gprMax.
@@ -25,11 +25,15 @@ from gprMax.grid.fdtd_grid import FDTDGrid
 from gprMax.pml import CUDAPML
 
 
-class CUDAGrid(FDTDGrid):
-    """Additional grid methods for solving on GPU using CUDA."""
+class CUDAArrayMixin:
+    """Device-array management shared by grids solved with CUDA - the main
+    grid (CUDAGrid) and sub-grids (CUDASubGridSHSG). Provides pycuda
+    gpuarray upload of the geometry/field/dispersive arrays and the 1-D
+    launch configuration used by the volume field kernels.
+    """
 
-    def __init__(self):
-        super().__init__()
+    def _init_cuda_arrays(self):
+        """Initialises the CUDA array machinery; call from __init__."""
 
         self.gpuarray = import_module("pycuda.gpuarray")
 
@@ -37,9 +41,6 @@ class CUDAGrid(FDTDGrid):
         self.tpb = (128, 1, 1)
         # Blocks per grid - used for main electric/magnetic field updates
         self.bpg = None
-
-    def _construct_pml(self, pml_ID: str, thickness: int) -> CUDAPML:
-        return super()._construct_pml(pml_ID, thickness, CUDAPML)
 
     def set_blocks_per_grid(self):
         """Set the blocks per grid size used for updating the electric and
@@ -74,3 +75,14 @@ class CUDAGrid(FDTDGrid):
         self.Tx_dev = self.gpuarray.to_gpu(self.Tx)
         self.Ty_dev = self.gpuarray.to_gpu(self.Ty)
         self.Tz_dev = self.gpuarray.to_gpu(self.Tz)
+
+
+class CUDAGrid(CUDAArrayMixin, FDTDGrid):
+    """Additional grid methods for solving on GPU using CUDA."""
+
+    def __init__(self):
+        super().__init__()
+        self._init_cuda_arrays()
+
+    def _construct_pml(self, pml_ID: str, thickness: int) -> CUDAPML:
+        return super()._construct_pml(pml_ID, thickness, CUDAPML)
