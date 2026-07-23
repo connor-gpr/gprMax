@@ -162,7 +162,10 @@ class CUDAUpdates(Updates[CUDAGrid]):
             NY_RXS=self.grid.iterations,
             NZ_RXS=len(self.grid.rxs),
             NY_SRCINFO=4,
-            NY_SRCWAVES=self.grid.iterations,
+            # srcwaves rows are iterations + 1 samples long (sources.py
+            # htod_src_arrays) - the stride must match or every source
+            # after the first reads a shifted waveform
+            NY_SRCWAVES=self.grid.iterations + 1,
             NX_SNAPS=Snapshot.nx_max,
             NY_SNAPS=Snapshot.ny_max,
             NZ_SNAPS=Snapshot.nz_max,
@@ -275,7 +278,7 @@ class CUDAUpdates(Updates[CUDAGrid]):
         """Sources - initialises arrays on GPU, prepares kernel and gets kernel
         function.
         """
-        self.subs_func.update({"NY_SRCINFO": 4, "NY_SRCWAVES": self.grid.iterations})
+        self.subs_func.update({"NY_SRCINFO": 4, "NY_SRCWAVES": self.grid.iterations + 1})
 
         if self.grid.hertziandipoles:
             (
