@@ -150,8 +150,8 @@ class CPUUpdates(Updates[GridType]):
             
     def update_electric_a(self):
         """Updates electric field components."""
-        # All materials are non-dispersive so do standard update.
-        if config.get_model_config().materials["maxpoles"] == 0:
+        # All materials in this grid are non-dispersive so do standard update.
+        if not self.grid_dispersive:
             update_electric_cpu(
                 self.grid.nx,
                 self.grid.ny,
@@ -219,7 +219,7 @@ class CPUUpdates(Updates[GridType]):
         updated after the electric field has been updated by the PML and
         source updates.
         """
-        if config.get_model_config().materials["maxpoles"] > 0:
+        if self.grid_dispersive:
             self.dispersive_update_b(
                 self.grid.nx,
                 self.grid.ny,

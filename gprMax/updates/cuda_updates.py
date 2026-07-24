@@ -130,8 +130,8 @@ class CUDAUpdates(Updates[CUDAGrid]):
     def _set_macros(self):
         """Common macros to be used in kernels."""
 
-        # Set specific values for any dispersive materials
-        if config.get_model_config().materials["maxpoles"] > 0:
+        # Set specific values if THIS grid has dispersive materials
+        if self.grid_dispersive:
             NY_MATDISPCOEFFS = self.grid.updatecoeffsdispersive.shape[1]
             NX_T = self.grid.Tx.shape[1]
             NY_T = self.grid.Tx.shape[2]
@@ -190,9 +190,9 @@ class CUDAUpdates(Updates[CUDAGrid]):
 
         self._copy_mat_coeffs(knlE, knlH)
 
-        # If there are any dispersive materials (updates are split into two
+        # If THIS grid has any dispersive materials (updates are split into two
         # parts as they require present and updated electric field values).
-        if config.get_model_config().materials["maxpoles"] > 0:
+        if self.grid_dispersive:
             self.subs_func.update(
                 {
                     "REAL": config.sim_config.dtypes["C_float_or_double"],
@@ -221,7 +221,7 @@ class CUDAUpdates(Updates[CUDAGrid]):
         self.grid.set_blocks_per_grid()
         self.grid.htod_geometry_arrays()
         self.grid.htod_field_arrays()
-        if config.get_model_config().materials["maxpoles"] > 0:
+        if self.grid_dispersive:
             self.grid.htod_dispersive_arrays()
 
     def _set_pml_knls(self):
@@ -479,8 +479,8 @@ class CUDAUpdates(Updates[CUDAGrid]):
 
     def update_electric_a(self):
         """Updates electric field components."""
-        # All materials are non-dispersive so do standard update.
-        if config.get_model_config().materials["maxpoles"] == 0:
+        # All materials in this grid are non-dispersive so do standard update.
+        if not self.grid_dispersive:
             self.update_electric_dev(
                 np.int32(self.grid.nx),
                 np.int32(self.grid.ny),
@@ -572,7 +572,7 @@ class CUDAUpdates(Updates[CUDAGrid]):
         updated after the electric field has been updated by the PML and
         source updates.
         """
-        if config.get_model_config().materials["maxpoles"] > 0:
+        if self.grid_dispersive:
             self.dispersive_update_b(
                 np.int32(self.grid.nx),
                 np.int32(self.grid.ny),

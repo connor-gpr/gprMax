@@ -156,24 +156,25 @@ def create_solver(model: Model) -> Solver:
 
     if config.sim_config.general["subgrid"]:
         updates = create_subgrid_updates(model)
-        if (
-            isinstance(updates, SubgridUpdates)
-            and config.get_model_config().materials["maxpoles"] != 0
-        ):
+        if isinstance(updates, SubgridUpdates):
             # Set dispersive update functions for both SubgridUpdates and
-            # SubgridUpdaters subclasses. This is a CPU/Cython-only
-            # mechanism: the CUDA subgrid path handles dispersive updates
-            # through kernel templating instead.
-            updates.set_dispersive_updates()
+            # SubgridUpdaters subclasses, each only if its own grid has
+            # dispersive materials (grids without them take the standard
+            # updates even when another grid is dispersive). This is a
+            # CPU/Cython-only mechanism: the CUDA subgrid path handles
+            # dispersive updates through kernel templating instead.
+            if updates.grid_dispersive:
+                updates.set_dispersive_updates()
             for u in updates.updaters:
-                u.set_dispersive_updates()
+                if u.grid_dispersive:
+                    u.set_dispersive_updates()
     elif type(grid) is FDTDGrid:
         updates = CPUUpdates(grid)
-        if config.get_model_config().materials["maxpoles"] != 0:
+        if updates.grid_dispersive:
             updates.set_dispersive_updates()
     elif type(grid) is MPIGrid:
         updates = MPIUpdates(grid)
-        if config.get_model_config().materials["maxpoles"] != 0:
+        if updates.grid_dispersive:
             updates.set_dispersive_updates()
     elif type(grid) is CUDAGrid:
         updates = CUDAUpdates(grid)

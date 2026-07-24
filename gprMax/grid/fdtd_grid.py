@@ -260,7 +260,7 @@ class FDTDGrid:
         self._create_voltage_source_materials()
         self.initialise_field_arrays()
         self.initialise_std_update_coeff_arrays()
-        if config.get_model_config().materials["maxpoles"] > 0:
+        if self.dispersive_poles() > 0:
             self.initialise_dispersive_arrays()
             self.initialise_dispersive_update_coeff_array()
         self._build_materials()
@@ -741,7 +741,7 @@ class FDTDGrid:
         """Clear arrays for field components and PMLs."""
         # Clear arrays for field components
         self.initialise_field_arrays()
-        if config.get_model_config().materials["maxpoles"] > 0:
+        if self.dispersive_poles() > 0:
             self.initialise_dispersive_arrays()
 
         # Clear arrays for fields in PML
@@ -794,6 +794,23 @@ class FDTDGrid:
         mem_use = fieldarrays + solidarray + rigidarrays + pmlarrays
 
         return mem_use
+
+    def dispersive_poles(self) -> int:
+        """Highest number of dispersive-material poles present in THIS grid.
+
+        The model-level materials["maxpoles"] is the maximum across all
+        grids: a grid whose own material list has no dispersive entries
+        must not pay the dispersive update/memory cost just because
+        another grid in the model does. Note the T/updatecoeffsdispersive
+        arrays of grids that ARE dispersive stay sized by the model-level
+        maxpoles so coefficient layouts and update loop counts remain
+        uniform across grids.
+
+        Returns:
+            poles: int of maximum poles over this grid's materials (0 if
+                    the grid has no dispersive materials).
+        """
+        return max((getattr(m, "poles", 0) for m in self.materials), default=0)
 
     def mem_est_dispersive(self):
         """Estimates the amount of memory (RAM) required for dispersive grid arrays.

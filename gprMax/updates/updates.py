@@ -56,6 +56,11 @@ class Updates(Generic[GridType], ABC):
         """
 
         self.grid = G
+        # Whether THIS grid needs the dispersive update path. The model
+        # -level materials["maxpoles"] stays the authority for dispersive
+        # dtypes and array widths, but grids without dispersive materials
+        # of their own take the standard (cheaper) field updates.
+        self.grid_dispersive = G.dispersive_poles() > 0
 
     @abstractmethod
     def store_outputs(self, iteration: int) -> None:

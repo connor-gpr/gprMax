@@ -114,6 +114,9 @@ class TestLossMaterial:
             dt=dt, dx=0.001, dy=0.001, dz=0.001,
             updatecoeffsE=np.zeros((2, 5)), updatecoeffsH=np.zeros((2, 5)),
             materials=[],
+            # _add_loss_material appends the dispersive zero row based on
+            # the grid's own poles (FDTDGrid.dispersive_poles)
+            dispersive_poles=lambda: 0,
         )
 
     @staticmethod

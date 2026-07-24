@@ -324,7 +324,10 @@ class SubGridSHSG(SubGridBaseGrid):
                         dtype=grid.updatecoeffsH.dtype)
         grid.updatecoeffsE = np.concatenate((grid.updatecoeffsE, rowE))
         grid.updatecoeffsH = np.concatenate((grid.updatecoeffsH, rowH))
-        if config.get_model_config().materials["maxpoles"] > 0:
+        # Keep the dispersive coefficient table row-aligned with material
+        # numIDs - only on grids that have one (grids without dispersive
+        # materials of their own no longer allocate it).
+        if grid.dispersive_poles() > 0:
             zrow = np.zeros((1, grid.updatecoeffsdispersive.shape[1]),
                             dtype=grid.updatecoeffsdispersive.dtype)
             grid.updatecoeffsdispersive = np.concatenate(

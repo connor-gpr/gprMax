@@ -119,3 +119,26 @@ def test_calculate_Iz(dx, dy, Hx, Hy, expected, size=2):
     expected_current[:, 0, :] = 0
 
     assert_allclose(actual_current, expected_current)
+
+
+def test_dispersive_poles():
+    """dispersive_poles reports THIS grid's poles only: 0 for grids with
+    no dispersive materials (even though the model-level maxpoles may be
+    non-zero from another grid), and the max poles otherwise."""
+    from gprMax.materials import DispersiveMaterial, Material
+
+    grid = FDTDGrid()
+    assert grid.dispersive_poles() == 0
+
+    grid.materials = [Material(0, "pec"), Material(1, "free_space")]
+    assert grid.dispersive_poles() == 0
+
+    debye = DispersiveMaterial(2, "water")
+    debye.poles = 1
+    lorentz = DispersiveMaterial(3, "fancy")
+    lorentz.poles = 2
+    grid.materials = [Material(0, "pec"), debye]
+    assert grid.dispersive_poles() == 1
+
+    grid.materials = [Material(0, "pec"), debye, lorentz]
+    assert grid.dispersive_poles() == 2
